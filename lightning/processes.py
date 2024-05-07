@@ -195,13 +195,15 @@ class SPSystemBase(AbstractCommonBase):
     """ System describing the base behaviour of a Social Process """
 
     def __init__(self, hparams: Namespace,
-                 builder: Type[Union[RecurrentBuilder, MLPBuilder]]) -> None:
+                 builder: Type[Union[RecurrentBuilder, MLPBuilder]],
+                 forced_z = None) -> None:
         """ Initialize the Social Process module.
 
         Args:
             hparams             -- The hyperparameters for the experiment
             builder             -- The factory to build backbone components
-
+            forced_z            -- Optional. Used for testing, to ignore the z decoding
+                                   and to force some specific value
         """
         #### Lightning broke hparams type saving again.
         if type(hparams) != Namespace:
@@ -213,7 +215,8 @@ class SPSystemBase(AbstractCommonBase):
         # Initialize the process
         self.process = sp.SocialProcessSeq2Seq(
             components, not hparams.skip_normalize_rot, hparams.nposes,
-            hparams.skip_deterministic_decoding
+            hparams.skip_deterministic_decoding,
+            forced_z=forced_z
         )
         # Initialize regularizer
         self.reg = OrthogonalRegularizer(reg=hparams.reg)

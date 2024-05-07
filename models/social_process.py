@@ -44,7 +44,8 @@ class SocialProcessSeq2Seq(nn.Module):
 
     def __init__(
             self, components: Seq2SeqProcessComponents, norm_rot: bool = True,
-            nposes: int = 1, skip_deterministic_decoding: bool = False
+            nposes: int = 1, skip_deterministic_decoding: bool = False,
+            forced_z = None
     ) -> None:
         """ Initialize the process """
         super().__init__()
@@ -58,6 +59,7 @@ class SocialProcessSeq2Seq(nn.Module):
         self.nposes = nposes
         self.skip_deterministic_decoding = skip_deterministic_decoding
         self.merge_observed_with_future = components.merge_observed_with_future
+        self.forced_z = forced_z
 
     def _normalize_rot(
             self, mean: Tensor, std: Tensor = None
@@ -183,7 +185,13 @@ class SocialProcessSeq2Seq(nn.Module):
         """
         # Sample a batch of z's using the reparameterization trick
         # (nz_samples, batch_size, z_dim)
-        z_samples = q_distrib.rsample([nz_samples])
+
+        if self.forced_z is not None:
+            # In case we are forcing some specific z (for experimentation purposes), we use the saved one
+            z_samples = self.forced_z
+        else:
+            # Otherwise, sample from the distribution
+            z_samples = q_distrib.rsample([nz_samples])
         z_samples = z_samples.expand(-1, samples.observed.shape[1], -1)
 
         # Encode latent representation r_context for the deterministic path

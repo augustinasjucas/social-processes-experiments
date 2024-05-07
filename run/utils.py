@@ -31,7 +31,8 @@ from lightning.processes import (
 
 def init_model(
         args: Namespace, ckpt_path: Optional[Path] = None,
-        sp_cls: Type = SPSystemSocial
+        sp_cls: Type = SPSystemSocial,
+        forced_z = None
     ) -> LightningModule:
     """ Initialize the Lightning module for the model """
     if args.model == ModelType.SOCIAL_PROCESS:
@@ -47,7 +48,7 @@ def init_model(
         if ckpt_path is None:
             system = sp_cls(args, builder)
         else:
-            system = sp_cls.load_from_checkpoint(str(ckpt_path), builder=builder)
+            system = sp_cls.load_from_checkpoint(str(ckpt_path), builder=builder, forced_z=forced_z)
     elif args.model == ModelType.NEURAL_PROCESS:
         # Initialize the NeuralProcess model
         if ckpt_path is None:
