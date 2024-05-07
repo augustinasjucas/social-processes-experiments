@@ -107,7 +107,8 @@ def init_process_components(
     else:
         raise ValueError("Unexpected stochastic encoder-decoder type")
     return Seq2SeqProcessComponents(
-        trg_seq2seq, latent_seq2seq, z_enc, det_seq2seq, attender
+        trg_seq2seq, latent_seq2seq, z_enc, det_seq2seq, attender,
+        merge_observed_with_future=hparams.my_merge_observed_with_future,
     )
 
 

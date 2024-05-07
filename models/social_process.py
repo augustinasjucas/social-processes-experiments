@@ -35,6 +35,8 @@ class Seq2SeqProcessComponents(NamedTuple):
     det_encdec: Optional[DeterministicEncDecType] = None
     attender: Optional[AttenderBase] = None
 
+    # Additional properties for the same-context, GM, and latent-space experiments
+    merge_observed_with_future: bool = False,
 
 class SocialProcessSeq2Seq(nn.Module):
 
@@ -55,6 +57,7 @@ class SocialProcessSeq2Seq(nn.Module):
         self.norm_rot = norm_rot
         self.nposes = nposes
         self.skip_deterministic_decoding = skip_deterministic_decoding
+        self.merge_observed_with_future = components.merge_observed_with_future
 
     def _normalize_rot(
             self, mean: Tensor, std: Tensor = None
@@ -217,14 +220,21 @@ class SocialProcessSeq2Seq(nn.Module):
         """
         ctx = split.context
         trg = split.target
-        # Get z distribution parameters for the context and target sequences
-        q_context = self._encode_latent(ctx.observed)
-        q_target = None
-        q = q_context
-        if self.training:
-            # Encode the target sequences too while training
-            q_target = self._encode_latent(trg.observed)
-            q = q_target
+        if not self.merge_observed_with_future: # Default case, when we only used observed sequences for encoding into z
+            q_context = self._encode_latent(ctx.observed)
+            q_target = None
+            q = q_context
+            if self.training:
+                # Encode the target sequences too while training
+                q_target = self._encode_latent(trg.observed) # THIS ONE CANNOT EVEN LEARN CORRECT KL!!! IT DOES NOT KNOW!!!!
+                q = q_target
+        else:   # Special option to merge observed with future. Needed for the same-context experiments, since for z-encoding, the future part contains crucial information
+            q_context = self._encode_latent(torch.cat([ctx.observed, ctx.future], dim=0))
+            q_target = None
+            q = q_context
+            if self.training:
+                q_target = self._encode_latent(torch.cat([trg.observed, trg.future], dim=0)) # TODO: discuss. maybe encoding target futures is not that good of an idea... but z is 1-dimensional, so we are probably fine here.
+                q = q_target
 
         # Get deterministic decoded futures on the latent and deterministic
         # paths to train the representations to also be informative
