@@ -522,3 +522,109 @@ class SocialPairedContextDataset(SocialDataset):
         samples = super().__getitem__(idx)
         context = self.group_ctx[samples.key]
         return (samples, context)
+
+
+class SyntheticGlancingSameContext(data.Dataset):
+
+    """ Dataset for the synthetic glancing experiment, where the context consists of the same type of curves (either clamped or not)"""
+
+    def __init__(self, arr: np.ndarray, future_len: int, batch_size: int, mixed_context: bool = False) -> None:
+        """Initializes the dataset. Does not compute anything.
+
+        We do some cheating here. I.e., the dataset is aware of the batch_size before hand (which it probably should not be
+        given). This allows the dataset to put all the sequences of the same type together in a single block in the dataset.
+        Then the dataloader will not do any shuffling (that is done here), and as a result, get all the sequences of the same
+        type together in a single batch.
+
+        Args:
+            arr (np.ndarray): the array containing the data
+            future_len (int): the length of the future sequence
+            batch_size (int): the batch size, i.e., the number of sequences in a meta-sample
+            mixed_context (bool): whether to shuffle all of the sequences. I.e., it forces actually using mixed context,
+                                  which is not really the point of this dataset. But it is useful for some experiments.
+        """
+        # Create the array that stores the indices
+        arr_indices = np.arange(arr.shape[1])
+
+        # Take every second element in the sequence and copy them as well
+        self.first_arr = arr[:, ::2, :]
+        self.second_arr = arr[:, 1::2, :]
+        first_arr_indices = arr_indices[::2]
+        second_arr_indices = arr_indices[1::2]
+
+        # Make a deep copy of first and second arrays and shuffle them
+        shuf1 = np.random.permutation(self.second_arr.shape[1])
+        shuf2 = np.random.permutation(self.first_arr.shape[1])
+
+        self.first_arr = self.first_arr.copy()
+        self.first_arr = self.first_arr[:, shuf1, :]
+
+        self.second_arr = self.second_arr.copy()
+        self.second_arr = self.second_arr[:, shuf2, :]
+
+        first_arr_indices = first_arr_indices[shuf1]
+        second_arr_indices = second_arr_indices[shuf2]
+
+        # Resize the arrays to be divisible by batch size (so drop a few curves, but whatever)
+        self.first_arr = self.first_arr[:, :(self.first_arr.shape[1] // batch_size) * batch_size, :]
+        self.second_arr = self.second_arr[:, :(self.second_arr.shape[1] // batch_size) * batch_size, :]
+
+        first_arr_indices = first_arr_indices[:(first_arr_indices.shape[0] // batch_size) * batch_size]
+        second_arr_indices = second_arr_indices[:(second_arr_indices.shape[0] // batch_size) * batch_size]
+
+        # Split them up into batches
+        first_batches = np.split(self.first_arr, self.first_arr.shape[1] // batch_size, axis=1)
+        second_batches = np.split(self.second_arr, self.second_arr.shape[1] // batch_size, axis=1)
+
+        first_batches_indices = np.split(first_arr_indices, first_arr_indices.shape[0] // batch_size)
+        second_batches_indices = np.split(second_arr_indices, second_arr_indices.shape[0] // batch_size)
+
+        # Concatenate the lists as python list
+        self.arr = first_batches + second_batches
+        self.arr_indices = first_batches_indices + second_batches_indices
+
+        # Shuffle the list
+        shuf3 = np.random.permutation(len(self.arr))
+        self.arr = [self.arr[i] for i in shuf3]
+        self.arr_indices = [self.arr_indices[i] for i in shuf3]
+
+        # Concatenate the list back to a numpy array
+        self.arr = np.concatenate(self.arr, axis=1)
+        self.arr_indices = np.concatenate(self.arr_indices)
+
+        # In case we actually want to use a mixed context, just drop what we did and shuffle everything
+        if mixed_context:
+            shuf4 = np.random.permutation(self.arr.shape[1])
+            self.arr = self.arr[:, shuf4, :]
+            self.arr_indices = self.arr_indices[shuf4]
+
+        self.future_len = future_len
+        self.batch_size = batch_size
+        self.taken_cnt = 0
+
+    def get_index(self, idx: int) -> int:
+        """
+        Get the corresponding index in the original np file, of some sequence from the dataset.
+        I.e., this is useful when we will want to get the "complement" of a sequence, since it is
+        stored in the original np file.
+        Args:
+            idx: the index in *this* dataset
+
+        Returns: the corresponding index in the *original* np file
+
+        """
+        return self.arr_indices[idx]
+
+    def __getitem__(self, idx: int) -> Seq2SeqSamples:
+        """ Returns the requested sample.
+        """
+        obs = self.arr[:-self.future_len, idx, :]
+        fut = self.arr[-self.future_len:, idx, :]
+
+        # reshape to [len; 1; 1]
+        obs = obs[:, np.newaxis, :]
+        fut = fut[:, np.newaxis, :]
+        return Seq2SeqSamples(future_len=self.future_len, key=[idx // 2], observed=obs, future=fut, observed_start=0)
+
+    def __len__(self) -> int:
+        return self.arr.shape[1]
