@@ -286,3 +286,42 @@ def plot_mixed_context(contexts: List[Seq2SeqSamples], targets: List[Seq2SeqSamp
 
     # Plot
     plt.show()
+
+
+def plot_normal_with_context(context: Seq2SeqSamples,
+                             distribution: torch.distributions.Normal):
+    """
+    Given the context sequences and q(z | C), this function plots the context on the left and the distribution on the right.
+
+    Args:
+        context: the context to plot
+        distribution: the distribution to plot
+    """
+
+    # Plot a max of 10 context sequences
+    context_cnt = min(context.observed.shape[1], 10)
+
+    # Create subplots with 2 columns and max(context_cnt, target_cnt) rows
+    fig, axs = plt.subplots(max(context_cnt, 1), 2, figsize=(10, 10))
+
+    # Plot the context on the left
+    for i in range(context_cnt):
+        # Plot the context observed in dark red and context future in light red. Plot them on the same plot, but make sure that the future part comes just after the observed part
+        axs[i, 0].plot(range(context.observed.shape[0]), context.observed[:, i, 0, 0], color="darkred")
+        axs[i, 0].plot(range(context.observed.shape[0], context.observed.shape[0]+context.future.shape[0]), context.future[:, i, 0, 0], color="lightcoral")
+
+    # Calculate the mean and variance of the distribution
+    mean = distribution.loc.detach().numpy()[0, 0]
+    std = distribution.scale.detach().numpy()[0, 0]
+
+    # Print the mean and std for ease of use
+    print("mean =", mean)
+    print("std =", std)
+
+    # Plot normal distribution at the top of the right column
+    x = np.linspace(mean - 3*std, mean + 3*std, 100)
+    axs[0, 1].plot(x, stats.norm.pdf(x, mean, std), color="blue")
+
+    # Set the hspace and plot
+    plt.subplots_adjust(hspace=0.5)
+    plt.show()
