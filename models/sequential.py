@@ -629,7 +629,7 @@ class StochasticEncoderDecoderRNN(SocialSeq2SeqBase):
         futures = torch.stack(futures)
         mu = futures[..., :data_dim]
         sigma = futures[..., data_dim:] if not self.fix_variance \
-            else torch.full(mu.size(), 0.05)
+            else torch.full(mu.size(), 0.05).to(mu.device)
 
         return mu, sigma
 
