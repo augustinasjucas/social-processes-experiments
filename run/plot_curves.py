@@ -325,3 +325,72 @@ def plot_normal_with_context(context: Seq2SeqSamples,
     # Set the hspace and plot
     plt.subplots_adjust(hspace=0.5)
     plt.show()
+
+def plot_z_analysis (
+        targets_observed: List[List[np.ndarray]],
+        target_future_predictions_mean: List[List[np.ndarray]],
+        target_future_predictions_std: List[List[np.ndarray]],
+        target_future_curves: List[List[np.ndarray]],
+        target_future_complement_curves: List[List[np.ndarray]],
+        z_samples: List[float]
+):
+    """
+    Plots the results of what happens when different samples are used as context encoding. It plots
+    the changing z values for multiple samples.
+
+    Args:
+        targets_observed: the observed targets. targets_observed[i][j] is the observed target
+        for the ith z sample and jth target sequence
+        target_future_predictions_mean: the predicted future targets
+        target_future_predictions_std:  the standard deviations of the predicted future targets
+        target_future_curves: the ground truth values for the future targets
+        target_future_complement_curves: the coresponding complement curves for the ground truth values of the
+        future targets
+        z_samples: a list of z values that were used
+    """
+
+    meta_sample_cnt = len(targets_observed)
+    z_sample_count = len(z_samples)
+
+    # Create subplot with sample_cnt rows and z_sample columns
+    fig, axs = plt.subplots(meta_sample_cnt, z_sample_count, figsize=(20, 10))
+
+    for i in range(meta_sample_cnt):
+        for j in range(z_sample_count):
+            # Plot the observed
+            axs[i, j].plot(range(targets_observed[i][j].shape[0]), targets_observed[i][j], color="darkblue")
+
+            # Plot the predicted future
+            axs[i, j].plot(range(targets_observed[i][j].shape[0], targets_observed[i][j].shape[0] + target_future_predictions_mean[i][j].shape[0]), target_future_predictions_mean[i][j], color="green")
+
+            # Plot the two possible futures
+            axs[i, j].plot(range(targets_observed[i][j].shape[0], targets_observed[i][j].shape[0] + target_future_predictions_mean[i][j].shape[0]), target_future_curves[i][j], color="lightblue")
+            axs[i, j].plot(range(targets_observed[i][j].shape[0], targets_observed[i][j].shape[0] + target_future_predictions_mean[i][j].shape[0]), target_future_complement_curves[i][j], color="lightblue")
+
+
+    # Set hspace
+    plt.subplots_adjust(hspace=0.2, wspace=0.01, top=0.956, bottom=0.044, left=0.023, right=0.968)
+
+    # Add legend
+    trt_observed = mlines.Line2D([], [], color='darkblue', marker='s', ls='', label='Target observed')
+    trg_future = mlines.Line2D([], [], color='lightblue', marker='s', ls='', label='Real target futures')
+    trg_predicted = mlines.Line2D([], [], color='green', marker='s', ls='', label='Target predicted')
+    plt.legend(handles=[trt_observed, trg_future, trg_predicted], loc="upper right")
+
+    # Add a SINGLE title above each column denoting the z value
+    for j, z in enumerate(z_samples):
+        z = round(z, 2)
+        axs[0, j].set_title(f"z={z}")
+
+    # Do the same for rows: add a number to the left of each row
+    for i in range(meta_sample_cnt):
+        axs[i, 0].set_ylabel(f"Sample {i}")
+
+    # Remove axis ticks from all subplots
+    for ax in axs.flat:
+        ax.label_outer()
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    # Show the subplots
+    plt.show()
