@@ -480,7 +480,6 @@ def main() -> None:
     parser.add_argument("--my_plot_q_of_z", default=False, action="store_true", help="Plot the q(z | C)")
     parser.add_argument("--my_fix_variance", type=bool, default=False, help="Checkpoints for my purposes...")
     parser.add_argument("--my_merge_context", default=False, action="store_true", help="Whether to have the context as fully observed, with empty future")
-    parser.add_argument("--my_force_posteriors", default=False, action="store_true",help="Whether to force the posteriors to be different for different targets")
     parser.add_argument("--my_ckpt", type=str, help="Checkpoints for my purposes...")
     parser.add_argument("--my_merge_observed_with_future", default=False, action="store_true", help="Whether to merge observed with futures for z encoding")
     parser.add_argument("--my_plot_z_analysis", default=False, action="store_true", help="Whether to merge observed with futures for z encoding")
@@ -598,6 +597,7 @@ python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --wav
 FOUND ISSUE: the context z encoding and the target z encoding both encode ONLY the observed parts of the sequences. In this situation, that does not make sense, since the observed part does not store the required information.
 SOLUTION: encode the context/target into p(z) by encoding on merged observed+target.
 ISSUE: this gives the future information for z, which can then be used by the decoder. BUUUUT, since z is one-dimensional here, this might be fine
+[====================== FROM THIS PART, EVERYTHING IS GOING TO BE IN THE README ======================]
 python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 32 --log_file final_train_log-MLP-1.txt --my_fix_variance True --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_force_posteriors --my_merge_observed_with_future
 
 
