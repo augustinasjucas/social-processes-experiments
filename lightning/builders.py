@@ -92,8 +92,7 @@ def init_process_components(
         attender = init_attender(hparams)
         encoded_rep_dim += hparams.r_dim # Account for r_context
 
-    z_nhid = (min(hparams.r_dim, hparams.z_dim)
-              + abs(hparams.r_dim - hparams.z_dim) // 2)
+    z_nhid = hparams.hid_dim    # TODO: fix this
     z_enc = ZEncoder(hparams.r_dim, hparams.z_dim, nhid=z_nhid,
                      nlayers=hparams.nz_layers, dropout=hparams.dropout)
 
