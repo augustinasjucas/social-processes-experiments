@@ -514,7 +514,7 @@ class StochasticEncoderDecoderRNN(SocialSeq2SeqBase):
     def __init__(
             self, encoder: EncoderRNN, decoder: DecoderRNN,
             encoded_rep_dim: int, pooler: Optional[TemporalPooler] = None,
-            fix_variance: bool = False
+            fix_variance: bool = False, use_GM: bool = False
         ) -> None:
         """ Initialize the object
 
@@ -528,6 +528,7 @@ class StochasticEncoderDecoderRNN(SocialSeq2SeqBase):
                                 Ensure that the encoder.nlayers is the same as
                                 pooler.encoder.nlayers, optional
             fix_variance    --  Learn the output variance if False
+            use_GM          --  Use the Gaussian Mixture model for the output if True
         """
         super().__init__(encoder, pooler)
         _validate_recurrent_args(encoder, pooler)
@@ -535,6 +536,13 @@ class StochasticEncoderDecoderRNN(SocialSeq2SeqBase):
         self.decoder_nhid_projector = nn.Linear(encoded_rep_dim, decoder.nhid)
         self.decoder = decoder
         self.fix_variance = fix_variance
+
+        # Save the flag for using Gaussian Mixture
+        self.use_GM = use_GM
+        if use_GM:
+            # Make the k_calculator be an MLP that takes as input the hidden state of the decoder and output a single number
+            self.k_calculator = MLP(decoder.nhid, 1, decoder.nhid, nlayers=1, dropout=0.25)
+            self.sigmoid = nn.Sigmoid()
 
 
     def _forward_decode(
@@ -584,6 +592,10 @@ class StochasticEncoderDecoderRNN(SocialSeq2SeqBase):
         if not self.fix_variance:
             decode_start = decode_start.repeat(1, 2)
 
+        if self.use_GM:
+            decode_start = decode_start.repeat(1, 3)
+            # technically the above should be "*2 + 1" (and not *3), but I am using a hack that 1*2+3 = 3, since for the experiment, we are using 2 gaussians
+
         # Iterate over ez_samples to generate a sequence for each
         for ez_sample in ez.split(1):
             # Set initial value of decoder to the concatenated latent
@@ -624,14 +636,37 @@ class StochasticEncoderDecoderRNN(SocialSeq2SeqBase):
             # Store generated sequences
             futures.append(outseqs)
 
-        # Stack predictions to get a tensor of shape
-        # (n_samples, future_len, batch_size*npeople, decoder.nout)
-        futures = torch.stack(futures)
-        mu = futures[..., :data_dim]
-        sigma = futures[..., data_dim:] if not self.fix_variance \
-            else torch.full(mu.size(), 0.05)
+        if self.use_GM:
+            if not self.fix_variance:
+                futures = torch.stack(futures)
+                mu1 = futures[..., :data_dim]
+                sigma1 = futures[..., data_dim:data_dim * 2]
+                k1 = nn.Sigmoid(self.k_calculator(hidden.mean(0).mean(0)))
+                mu2 = futures[..., data_dim * 2 + 1:data_dim * 3 + 1]
+                sigma2 = futures[..., data_dim * 3 + 1:data_dim * 4 + 1]
 
-        return mu, sigma
+            else:
+                futures = torch.stack(futures)
+                mu1 = futures[..., :data_dim]
+                sigma1 = torch.full(mu1.size(), 0.05).to(mu1.device)
+
+                # Calculate k1
+                k1 = self.k_calculator(hidden.mean(0).mean(0))
+                k1 = self.sigmoid(k1)
+
+                mu2 = futures[..., data_dim + 1:data_dim * 2 + 1]
+                sigma2 = torch.full(mu2.size(), 0.05).to(mu2.device)
+
+            return mu1, sigma1, k1, mu2, sigma2
+        else:
+            # Stack predictions to get a tensor of shape
+            # (n_samples, future_len, batch_size*npeople, decoder.nout)
+            futures = torch.stack(futures)
+            mu = futures[..., :data_dim]
+            sigma = futures[..., data_dim:] if not self.fix_variance \
+                else torch.full(mu.size(), 0.05).to(mu.device)
+
+            return mu, sigma
 
     def forward(
             self, samples: Seq2SeqSamples, z: Tensor,
@@ -669,14 +704,28 @@ class StochasticEncoderDecoderRNN(SocialSeq2SeqBase):
         z = combine_rz(z, p, r_context)
 
         # Decode the future sequences
-        future_mu, future_sigma = self._forward_decode(
-            encoded_rep, decode_start, z, samples.future_len, flat_fut, teacher_forcing
-        )
+        if self.use_GM:
+            mu1, sigma1, k1, mu2, sigma2 = self._forward_decode(
+                encoded_rep, decode_start, z, samples.future_len, flat_fut, teacher_forcing
+            )
 
-        future_mu = future_mu.view(future_mu.shape[0], samples.future_len, b, p, -1)
-        future_sigma = future_sigma.view(future_sigma.shape[0], samples.future_len, b, p, -1)
+            mu1 = mu1.view(mu1.size(0), samples.future_len, b, p, -1)
+            sigma1 = sigma1.view(sigma1.size(0), samples.future_len, b, p, -1)
+            # k1 = k1.view(k1.size(0), samples.future_len, b, p, -1)
 
-        return future_mu, future_sigma, encoded_rep
+            mu2 = mu2.view(mu2.size(0), samples.future_len, b, p, -1)
+            sigma2 = sigma2.view(sigma2.size(0), samples.future_len, b, p, -1)
+
+            return mu1, sigma1, k1, mu2, sigma2, encoded_rep
+        else:
+            future_mu, future_sigma = self._forward_decode(
+                encoded_rep, decode_start, z, samples.future_len, flat_fut, teacher_forcing
+            )
+
+            future_mu = future_mu.view(future_mu.shape[0], samples.future_len, b, p, -1)
+            future_sigma = future_sigma.view(future_sigma.shape[0], samples.future_len, b, p, -1)
+
+            return future_mu, future_sigma, encoded_rep
 
 
 class DeterministicEncoderDecoderMLP(SocialSeq2SeqBase):

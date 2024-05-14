@@ -37,6 +37,7 @@ class Seq2SeqProcessComponents(NamedTuple):
 
     # Additional properties for the same-context, GM, and latent-space experiments
     merge_observed_with_future: bool = False,
+    use_GM: bool = False
 
 class SocialProcessSeq2Seq(nn.Module):
 
@@ -58,6 +59,7 @@ class SocialProcessSeq2Seq(nn.Module):
         self.norm_rot = norm_rot
         self.nposes = nposes
         self.skip_deterministic_decoding = skip_deterministic_decoding
+        self.use_GM = components.use_GM
         self.merge_observed_with_future = components.merge_observed_with_future
         self.forced_z = forced_z
 
@@ -121,7 +123,6 @@ class SocialProcessSeq2Seq(nn.Module):
                 (batch_size, z_dim)
 
         """
-        # Encode the observed seqs, rep is (nlayers, batch_size * npeople, dim)
         rep = self.latent_encdec.encode_sequences(observed)
         rep = rep.mean(0) # (batch_size * npeople, dim)
         return self.reparameterize_latent(rep)
@@ -200,16 +201,25 @@ class SocialProcessSeq2Seq(nn.Module):
             r_context = self._encode_deterministic(context, samples.observed)
 
         # Get the predictive distribution of targets y*
-        future_mu, future_sigma, encoded_rep  = self.trg_encdec(
-            samples, z_samples, r_context, teacher_forcing
-        )
-        # Normalize the mean and std. rotation components of the predictions
-        # This is done to obtain a unit quaternion
-        if self.norm_rot:
-            future_mu, future_sigma = self._normalize_rot(
-                future_mu, future_sigma
+        if self.use_GM:
+            # In case GM is used, we need to predict two distributions and some coefficient k (this is needed for a single experiment only)
+            future_mu_1, future_sigma_1, k1, future_mu_2, future_sigma_2, encoded_rep = self.trg_encdec(
+                samples, z_samples, r_context, teacher_forcing
             )
-        return Normal(future_mu, future_sigma), encoded_rep
+
+            return (Normal(future_mu_1, future_sigma_1), Normal(future_mu_2, future_sigma_2), k1), encoded_rep
+        else:
+            # If GM is not used, we predict only one distribution, as usual
+            future_mu, future_sigma, encoded_rep = self.trg_encdec(
+                samples, z_samples, r_context, teacher_forcing
+            )
+            # Normalize the mean and std. rotation components of the predictions
+            # This is done to obtain a unit quaternion
+            if self.norm_rot:
+                future_mu, future_sigma = self._normalize_rot(
+                    future_mu, future_sigma
+                )
+            return Normal(future_mu, future_sigma), encoded_rep
 
     def forward(self, split: types.DataSplit, nz_samples: int = 1,
                 teacher_forcing: float = 0.5) -> types.Seq2SeqPredictions:

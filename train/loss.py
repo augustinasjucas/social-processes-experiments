@@ -25,28 +25,37 @@ class SocialProcessLoss(nn.Module):
 
     """ Compute the loss for training a SocialProcess """
 
-    def __init__(self, aux_criterion: nn.Module = None):
+    def __init__(self, aux_criterion: nn.Module = None, use_GM: bool = False):
         """ Initialize the module.
         Args:
             aux_criterion   :   A module that computes any auxillary loss
                                 terms barring regularization
+            use_GM          :   Use Gaussian Mixture for the loss, if True
         """
         super().__init__()
         self.elbo = SocialProcessSeq2SeqElbo()
         self.aux_criterion = aux_criterion
+        self.use_GM = use_GM
 
     def forward(
             self, sp_prediction: Seq2SeqPredictions, split: DataSplit
         ) -> Tuple[Tensor, Tensor]:
         """ Compute the loss """
-        trg = split.target
-        loss, nll, kl = self.elbo(sp_prediction, trg.future)
-        aux_losses = None
         if self.aux_criterion is not None:
-            future_mean = sp_prediction.stochastic.loc
-            aux_losses = self.aux_criterion(
-                future_mean, trg.future.expand_as(future_mean)
-            )
+            if self.use_GM: # Calculate auxilary loss for GMs
+                trg = split.target
+                loss, nll, kl = self.elbo(sp_prediction, trg.future)
+                future_mean_1 = sp_prediction.stochastic[0].loc
+                future_mean_2 = sp_prediction.stochastic[1].loc
+                k = sp_prediction.stochastic[2].view([])
+                aux_losses = self.aux_criterion(future_mean_1, trg.future.expand_as(future_mean_1)) * k + self.aux_criterion(future_mean_2, trg.future.expand_as(future_mean_2)) * (1 - k)
+            else:           # Calculate auxilary loss for the default single normal
+                trg = split.target
+                loss, nll, kl = self.elbo(sp_prediction, trg.future)
+                future_mean = sp_prediction.stochastic.loc
+                aux_losses = self.aux_criterion(
+                    future_mean, trg.future.expand_as(future_mean)
+                )
             for pred in sp_prediction.deterministic:
                 # Deterministic decoded futures from the latent and det paths
                 if pred is not None:

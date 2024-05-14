@@ -55,7 +55,21 @@ class SocialProcessSeq2SeqElbo(nn.Module):
 
         """
         qs = pred.posteriors
-        loss = - log_likelihood(pred.stochastic, target_future)
+
+        # In case of a mixture model, the pred.stochastic is a tuple
+        if isinstance(pred.stochastic, tuple):
+            # The pred.stochastic is a tuple of (normal_1, normal_2, k)
+            normal_1 = pred.stochastic[0]
+            normal_2 = pred.stochastic[1]
+            k = pred.stochastic[2].view([])
+            eps = torch.tensor(1e-10)
+            # Calculate the nll for the mixture model, using logsumexp
+            loss = -torch.logsumexp(torch.stack([torch.log(k + eps) + log_likelihood(normal_1, target_future), torch.log(1-k + eps) + log_likelihood(normal_2, target_future)], dim=0), dim=0)
+
+        # In the default case of a single normal distribution, just calculate the nll as usual
+        else:
+            loss = - log_likelihood(pred.stochastic, target_future)
+
         nll = loss.detach().clone() # important for preserving value
         kl = None
         if qs.q_target is not None:

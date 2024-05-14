@@ -225,7 +225,7 @@ class SPSystemBase(AbstractCommonBase):
 
     def _configure_loss(self, hparams: Namespace) -> nn.Module:
         """ Configure the loss module """
-        return SocialProcessLoss(nn.MSELoss())
+        return SocialProcessLoss(nn.MSELoss(), hparams.my_use_GM)
 
     def forward(self, batch: DataSplit) -> Seq2SeqPredictions:
         """ Perform inference for the Social Process """
@@ -318,7 +318,7 @@ class SPSystemSocial(SPSystemBase):
         """ Configure the loss module """
         sx, sq = hparams.homo_init
         aux_loss = SocialAuxLoss(sx, sq, hparams.nposes, hparams.feature_set)
-        return SocialProcessLoss(aux_loss)
+        return SocialProcessLoss(aux_loss, hparams.my_use_GM)
 
     def create_optimizer(self):
         """ Setup optimizers for training the Social Process """

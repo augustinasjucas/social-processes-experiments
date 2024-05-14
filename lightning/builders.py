@@ -101,13 +101,14 @@ def init_process_components(
     elif stochastic_type == StochasticEncoderDecoderRNN:
         trg_seq2seq = stochastic_type(
             encoder, decoder, encoded_rep_dim,
-            pooler=pooler, fix_variance=hparams.fix_variance
+            pooler=pooler, fix_variance=hparams.fix_variance, use_GM=hparams.my_use_GM
         )
     else:
         raise ValueError("Unexpected stochastic encoder-decoder type")
     return Seq2SeqProcessComponents(
         trg_seq2seq, latent_seq2seq, z_enc, det_seq2seq, attender,
         merge_observed_with_future=hparams.my_merge_observed_with_future,
+        use_GM=hparams.my_use_GM
     )
 
 
@@ -123,7 +124,7 @@ class RecurrentBuilder:
             hparams.data_dim, hparams.enc_nhid, hparams.r_dim, hparams.dec_nhid,
             hparams.nlayers, hparams.fix_variance, hparams.share_target_encoder,
             hparams.use_deterministic_path, hparams.skip_deterministic_decoding,
-            hparams.dropout
+            hparams.dropout, hparams.my_use_GM
         )
 
         # Initialize the pooler if needed
@@ -157,7 +158,7 @@ class RecurrentBuilder:
             data_dim: int, encoder_nhid: int, encoder_nout: int,
             decoder_nhid: int, nlayers: int, fix_variance: bool,
             share_trg_encoder: bool = True, deterministic_path: bool = False,
-            skip_det_decoding: bool = False, dropout: float = 0
+            skip_det_decoding: bool = False, dropout: float = 0, use_GM: bool = False
         ) -> Tuple[EncoderRNN, DecoderRNN, EncoderRNN, DecoderRNN, EncoderRNN,
                    DecoderRNN]:
         """ Initialise the rnn component encoders and decoders

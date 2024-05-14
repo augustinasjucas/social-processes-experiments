@@ -70,7 +70,7 @@ class Seq2SeqPredictions(NamedTuple):
                            the latent and deterministic paths
 
     """
-    stochastic: Normal
+    stochastic: Union[Normal, Tuple[Normal, Normal, Tensor]]  # to accommodate gaussian mixtures, I have added the second option
     posteriors: ApproximatePosteriors
     encoded_rep: Optional[Tensor] = None
     deterministic: Tuple[Optional[Tensor], Optional[Tensor]] = (None, None)
