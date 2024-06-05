@@ -19,7 +19,8 @@ from run.utils import init_model, init_ckpt_callbacks, override_hidden_dims
 from data.loader import DataSplit
 import torch
 
-from run.plot_curves import plot_batch, plot_mixed_context, plot_normal_with_context, plot_z_analysis
+from run.plot_curves import (plot_batch, plot_mixed_context, plot_normal_with_context, plot_z_analysis,
+                             plot_multiple_samples_of_z)
 
 def merge_context(data_split : DataSplit):
     """
@@ -335,7 +336,7 @@ def test_q_of_z(
             break
 
 def test_z_analysis(
-    test_set: SyntheticGlancingSameContext,
+        test_set: SyntheticGlancingSameContext,
         args: Namespace,
         ckpt_path,
         waves: np.ndarray
@@ -351,7 +352,7 @@ def test_z_analysis(
     """
 
     # Initialize model
-    process = init_model(args, ckpt_path, sp_cls=SPSystemBase)
+    process = init_model(args, ckpt_path, sp_cls=SPSystemBase, forced_z=None)
     process.freeze()
 
     # Create a loader for the data
@@ -405,7 +406,6 @@ def test_z_analysis(
 
             # Get the observed and future parts of the target
             target_observed = meta_sample.target.observed[:, 1, 0, 0].detach().numpy() # We could do [:, xx, 0, 0], since each xx corresponds to a different curve in the target
-            target_future = meta_sample.target.future[:, 1, 0, 0].detach().numpy()
 
             # Extract the future predictions of the target
             target_future_prediction_mean = results.stochastic.mean[0, :, 1, 0, 0].detach().numpy()
@@ -433,6 +433,110 @@ def test_z_analysis(
             break
 
     plot_z_analysis(targets_observed, target_future_predictions_mean, target_future_predictions_std, target_future_curves, target_future_complement_curves, z_samples)
+
+def test_multiple_samples_of_z(
+        test_set: SyntheticGlancingSameContext,
+        args: Namespace,
+        ckpt_path,
+        waves: np.ndarray,
+):
+    """
+    Given a meta-sample, calculate q(z). Then, sample z multiple times and calculate the predictions for each z.
+    Plot all of these curves. Check the standard deviation of these curves, comparing to the predicted std.
+
+    Args:
+        test_set: the dataset on which to test
+        args: model arguments
+        ckpt_path: path to the model to load
+        waves: the initial np array that the dataset was created from
+    """
+    # Initialize model
+    process = init_model(args, ckpt_path, sp_cls=SPSystemBase)
+    process.freeze()
+
+    # Create a loader for the data
+    ncontext = args.batch_size // 4
+    loader = DataLoader(
+        test_set, shuffle=False, batch_size=args.batch_size,
+        collate_fn=get_collate_function(args.my_merge_context, ncontext)
+    )
+
+    # If we want to use proper validation, we need the custom dataset.
+    if args.my_use_proper_validation:
+        loader, val_loader, train_waves, val_waves, train_set, val_set = get_custom_dataset_for_validation(args, ncontext)
+        waves = train_waves
+        test_set = train_set
+
+    # If we want to plot the validation set, change the loader and waves to the validation ones
+    if args.my_plot_validation_set:
+        loader = val_loader
+        waves = val_waves
+        test_set = val_set
+
+    # Set the number of samples to plot and the number of z samples
+    meta_sample_cnt = 6
+    z_sample_count = args.my_multi_sample_count
+
+    # Go over the meta samples and the z samples
+    for (i, meta_sample) in enumerate(loader):
+
+        # Initialize the lists for the values
+        future_means = []
+        future_stds = []
+
+        # Extract target observed and future
+        target_observed = meta_sample.target.observed[:, 0, 0, 0].detach().numpy()
+        target_future = meta_sample.target.future[:, 0, 0, 0].detach().numpy()
+
+        # Process the meta sample to get q(z | C)
+        process = init_model(args, ckpt_path, sp_cls=SPSystemBase)
+        process.freeze()
+        results = process(meta_sample)
+        context_q = results.posteriors.q_context
+
+        # Get the single predicted std by using the mean z
+        mean_z = torch.tensor(context_q.loc, dtype=torch.float32).view(1, 1, 1)
+        process = init_model(args, ckpt_path, sp_cls=SPSystemBase, forced_z=mean_z)
+        process.freeze()
+        results = process(meta_sample)
+        target_main_future_prediction_mean = results.stochastic.mean[0, :, 0, 0, 0].detach().numpy()
+        target_main_future_prediction_std = results.stochastic.scale[0, :, 0, 0, 0].detach().numpy()
+
+        # Sample from that distribution multiple times
+        for j in range(z_sample_count):
+
+            # Sample from q(z | C)
+            z = context_q.rsample()
+
+            # convert z to tensor and reshape it
+            z = torch.tensor(z, dtype=torch.float32).view(1, 1, 1)
+
+            # Initialize the model, denoting the forced z value
+            process = init_model(args, ckpt_path, sp_cls=SPSystemBase, forced_z=z)
+            process.freeze()
+
+            # Calculate the predictions for the given meta sample
+            results = process(meta_sample)
+
+            # Extract the future predictions of the target
+            target_future_prediction_mean = results.stochastic.mean[0, :, 0, 0, 0].detach().numpy()
+            target_future_prediction_std = results.stochastic.scale[0, :, 0, 0, 0].detach().numpy()
+
+            # Save the values for plotting
+            future_means.append(target_future_prediction_mean)
+            future_stds.append(target_future_prediction_std)
+
+        # Plot the results
+        plot_multiple_samples_of_z(
+            meta_sample.context,
+            target_observed, target_future,
+            target_main_future_prediction_mean, target_main_future_prediction_std,
+            context_q,
+            future_means, future_stds,
+            args.my_multi_plot_greens, args.my_multi_plot_greens_stds, args.my_multi_plot_reds, args.my_multi_plot_blacks
+        )
+
+
 
 def main() -> None:
     """ Run the main experiment """
@@ -478,7 +582,6 @@ def main() -> None:
 
     # Added for this experiment
     parser.add_argument("--my_plot_q_of_z", default=False, action="store_true", help="Plot the q(z | C)")
-    parser.add_argument("--my_fix_variance", type=bool, default=False, help="Checkpoints for my purposes...")
     parser.add_argument("--my_merge_context", default=False, action="store_true", help="Whether to have the context as fully observed, with empty future")
     parser.add_argument("--my_ckpt", type=str, help="Checkpoints for my purposes...")
     parser.add_argument("--my_merge_observed_with_future", default=False, action="store_true", help="Whether to merge observed with futures for z encoding")
@@ -493,6 +596,12 @@ def main() -> None:
     parser.add_argument("--my_plot_nice_mixed_context_summary", default=False, action="store_true", help="Whether to use mixed context for testing")
     parser.add_argument("--my_train_with_mixed_context", default=False, action="store_true", help="Whether to use mixed context for testing")
 
+    parser.add_argument("--my_test_multiple_samples_of_z", default=False, action="store_true", help="Whether to use multiple samples of z for testing")
+    parser.add_argument("--my_multi_plot_greens", default=False, action="store_true", help="")
+    parser.add_argument("--my_multi_plot_reds", default=False, action="store_true", help="")
+    parser.add_argument("--my_multi_plot_blacks", default=False, action="store_true", help="")
+    parser.add_argument("--my_multi_plot_greens_stds", default=False, action="store_true", help="")
+    parser.add_argument("--my_multi_sample_count", type=int, help="Number of samples to draw", default=50)
     # Add Trainer args
     parser = Trainer.add_argparse_args(parser)
 
@@ -533,7 +642,6 @@ def main() -> None:
     args.no_pool = True
     args.observed_len = waves.shape[0] - args.future_len
     args.nposes = 1
-    args.fix_variance = args.my_fix_variance
 
     # Train
     if not args.test:
@@ -544,9 +652,10 @@ def main() -> None:
         test_q_of_z(train_set, args, args.my_ckpt)
     elif args.test and args.my_plot_z_analysis:
         test_z_analysis(train_set, args, args.my_ckpt, waves)
+    elif args.test and args.my_test_multiple_samples_of_z:
+        test_multiple_samples_of_z(train_set, args, args.my_ckpt, waves)
     elif args.test:
         test(train_set, args, args.my_ckpt, waves, args.my_use_GM, args.my_test_with_mixed_context, args.my_plot_nice_mixed_context_summary)
-
 
 if __name__ == "__main__":
     main()
@@ -670,10 +779,71 @@ Better z analysis for testing with mixed context (train with same context):
 python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --my_fix_variance True --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=10-monitored_nll=-1.382.ckpt" --test --my_test_with_mixed_context --my_dont_plot_reds --my_plot_nice_mixed_context_summary
 
 When trained with mixed context:
- python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --my_fix_variance True --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=13-monitored_nll=23.385.ckpt" --my_train_with_mixed_context --test --my_test_with_mixed_context --my_dont_plot_reds --my_plot_nice_mixed_context_summary
+ python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=13-monitored_nll=23.385.ckpt" --my_train_with_mixed_context --test --my_test_with_mixed_context --my_dont_plot_reds --my_plot_nice_mixed_context_summary
  
  
 out-2\logs\checkpoints-synthetic\mon-epoch=13-monitored_nll=23.385.ckpt
+
+
+
+PROPERLY TRAINED WITH UNFIXED VARIANCE (z analysis, important!):
+python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_plot_z_analysis --my_z_anal_left -2.5 --my_z_anal_right -0.9
+
+SAME THING, BUT NOW PLOTTING q_z:
+python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_plot_q_of_z
+
+THEN FINAL NICE Z ANALYSIS: 
+python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_plot_nice_mixed_context_summary
+
+and if testing with mixed context:(THIS IS IMPORTANT, AS IT SHOWS THAT q(z | C) is different!)
+python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --my_test_with_mixed_context --test --my_plot_nice_mixed_context_summary
+
+Finally, sampling from q(z |C):
+Unfixed:
+(below)
+fixed:
+(below)
+
+==================================== MULTI SAMPLING ===================================
+
+===== FIXED ======
+With fixed variance (sampling from q(z|C), not using mixed context here):
+python -m  run.run_synthetic_glancing_same_context  --my_multi_plot_reds --my_multi_plot_blacks --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=10-monitored_nll=-1.382.ckpt" --test --my_dont_plot_reds --my_test_multiple_samples_of_z
+Without fixed variance (sampling from q(z|C):
+(below)
+
+================ UNFIXED ===================
+Z analysis for unfixed:
+python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test  --my_plot_z_analysis --my_z_anal_left -2.5 --my_z_anal_right -0.9
+
+   (my_multi_plot_greens, my_multi_plot_greens_stds, my_multi_plot_reds, my_multi_plot_blacks, my_multi_sample_count)
+   
+To see the samples (no std):  
+python -m run.run_synthetic_glancing_same_context --my_multi_plot_greens --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_test_multiple_samples_of_z
+
+To see the samples (with std). HERE we see that even if the sampled z makes the curve too far away from the ground truth, the STD is still large. Kinda makes sense, but also maybe not.
+python -m run.run_synthetic_glancing_same_context --my_multi_sample_count 5 --my_multi_plot_greens --my_multi_plot_greens_stds --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_test_multiple_samples_of_z
+
+Multiple samples with a summary:
+python -m run.run_synthetic_glancing_same_context --my_multi_plot_reds --my_multi_plot_greens --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_test_multiple_samples_of_z
+
+Multiple samples with only a summary:
+python -m run.run_synthetic_glancing_same_context --my_multi_plot_reds --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_test_multiple_samples_of_z
+
+Multiple samples with a summary + sample from the middle: (HERE WE SEE THAT THAT BOTH variance when sampling from z is small and the variance from the middle aims to minimize the variance) Also, the curves nicely match.
+python -m run.run_synthetic_glancing_same_context --my_multi_plot_reds --my_multi_plot_blacks --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_test_multiple_samples_of_z
+
+
+FINAL CONCLUSIONS:
+    1. When variance is not fixed, the output variance tries to be as small as possible and the sampling-from-q(z|C) variance
+    is also very small (max 0.01 at places). Those 2 variances do not match, since we force the output variance to be at last 0.1. 
+    I suspect that if we didnt, it would go to 0. 
+    
+    2.  When variance IS fixed, the sampling-from-q(z|C) variance is also very small (~0.01 mostly).
+    
+    3. If we take the mean curve from multiple sampling-from-q(z|C) samples, we will get the same curve as the mean of the sample that was generated from mean z.
+    That is cool.
+    
 
 """
 

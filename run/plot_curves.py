@@ -5,7 +5,7 @@ import matplotlib.lines as mlines
 from scipy import stats
 from data.types import Seq2SeqSamples
 import torch
-
+import matplotlib.patheffects as pe
 
 def plot_batch(context: Seq2SeqSamples, target:Seq2SeqSamples,
                predicted_target_futures: np.ndarray = None,
@@ -204,6 +204,11 @@ def plot_mixed_context(contexts: List[Seq2SeqSamples], targets: List[Seq2SeqSamp
     # Create subplots with 9 columns and as many rows as meta-samples to plot
     fig, axs = plt.subplots(len(contexts), 9, figsize=(20, 20))
 
+    # Remove all ticks
+    for ax in axs.flatten():
+        ax.set_xticks([])
+        ax.set_yticks([])
+
     # Iterate over the meta-samples
     for i in range(len(contexts)):
 
@@ -221,7 +226,7 @@ def plot_mixed_context(contexts: List[Seq2SeqSamples], targets: List[Seq2SeqSamp
             x = np.linspace(mean - 3*std, mean + 3*std, 100)
             axs[i, 4].plot(x, stats.norm.pdf(x, mean, std), color="blue")
             # Set x axis to interval [0; 2]
-            axs[i, 4].set_xticks(np.arange(0.0, 2.1, 0.1))
+            axs[i, 4].set_xticks(np.arange(-3, 2.1, 1))
 
         # On the next 4 columns of each row, draw the target and the predictions
         trg_cnt = target_cnt = min(targets[i].observed.shape[1], 4)
@@ -262,11 +267,6 @@ def plot_mixed_context(contexts: List[Seq2SeqSamples], targets: List[Seq2SeqSamp
 
     # Change margins
     plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05, wspace=0)
-
-    # Remove all ticks
-    for ax in axs.flatten():
-        ax.set_xticks([])
-        ax.set_yticks([])
 
     # Stitch every 2 rows together (to make it clearer)
     for ax in fig.axes:
@@ -360,8 +360,10 @@ def plot_z_analysis (
             # Plot the observed
             axs[i, j].plot(range(targets_observed[i][j].shape[0]), targets_observed[i][j], color="darkblue")
 
-            # Plot the predicted future
-            axs[i, j].plot(range(targets_observed[i][j].shape[0], targets_observed[i][j].shape[0] + target_future_predictions_mean[i][j].shape[0]), target_future_predictions_mean[i][j], color="green")
+            # Plot the predicted future (with stds)
+            axs[i, j].errorbar(range(targets_observed[i][j].shape[0], targets_observed[i][j].shape[0] + target_future_predictions_mean[i][j].shape[0]), target_future_predictions_mean[i][j], target_future_predictions_std[i][j], color="green")
+            # axs[i, j].plot(range(targets_observed[i][j].shape[0], targets_observed[i][j].shape[0] + target_future_predictions_mean[i][j].shape[0]), target_future_predictions_mean[i][j], color="green")
+
 
             # Plot the two possible futures
             axs[i, j].plot(range(targets_observed[i][j].shape[0], targets_observed[i][j].shape[0] + target_future_predictions_mean[i][j].shape[0]), target_future_curves[i][j], color="lightblue")
@@ -393,4 +395,99 @@ def plot_z_analysis (
         ax.set_yticks([])
 
     # Show the subplots
+    plt.show()
+
+def plot_multiple_samples_of_z (
+        context: Seq2SeqSamples,
+        target_observed: np.ndarray,
+        target_future: np.ndarray,
+        target_main_future_prediction_mean: np.ndarray,
+        target_main_future_prediction_std: np.ndarray,
+        context_q: torch.distributions.Normal,
+        future_means: List[np.ndarray],
+        future_stds: List[np.ndarray],
+
+        plot_samples,
+        plot_sample_stds,
+        plot_samples_summary,
+        plot_main_prediction
+
+):
+    # Extract variables
+    context_size = context.observed.shape[1]
+    z_count = len(future_means)
+
+    # For each timepoint in the future_means calculate the mean and std of the future predictions
+    timepoint_count = future_means[0].shape[0]
+    future_means_from_z = np.array([np.mean([future_means[j][i] for j in range(z_count)], axis=0) for i in range(timepoint_count)])
+    future_stds_from_z = np.array([np.std([future_means[j][i] for j in range(z_count)], axis=0) for i in range(timepoint_count)])
+
+    print("STDs from the main prediction: ", target_main_future_prediction_std)
+    print("STDs from the z samples: ", future_stds_from_z)
+
+    if plot_sample_stds:
+        print("The stds for the samples: ")
+        for std in future_stds:
+            print("    Sample stds: ", std)
+
+    # Create subplot with columns for: contex, q(z|C), target
+    fig = plt.figure()
+    gs = fig.add_gridspec(context_size, 2 + context_size)
+    ax_q = fig.add_subplot(gs[0, 1])
+    ax_target = fig.add_subplot(gs[0:, 2:])
+
+    # Plot the context
+    for i in range(context_size):
+        # Plot the context observed in dark red and context future in light red. Plot them on the same plot, but make sure that the future part comes just after the observed part
+        ax = fig.add_subplot(gs[i, 0])
+        ax.plot(range(context.observed.shape[0]), context.observed[:, i, 0, 0], color="darkred")
+        ax.plot(range(context.observed.shape[0], context.observed.shape[0]+context.future.shape[0]), context.future[:, i, 0, 0], color="lightcoral")
+
+    # Plot the q distribution
+    mean = context_q.loc.detach().numpy()[0, 0]
+    std = context_q.scale.detach().numpy()[0, 0]
+    x = np.linspace(mean - 3*std, mean + 3*std, 100)
+    ax_q.plot(x, stats.norm.pdf(x, mean, std), color="blue")
+    ax_q.set_xticks(np.arange(0.0, 2.1, 0.4))
+
+    # Plot the target
+    ax_target.plot(range(target_observed.shape[0]), target_observed, color="darkblue")
+    ax_target.plot(range(target_observed.shape[0], target_observed.shape[0] + target_future.shape[0]), target_future, color="blue", path_effects=[pe.Stroke(linewidth=3, foreground='blue')])
+
+    # Plot the future predictions
+    for i in range(z_count):
+        # Plot this thing in a single merged cell: column 2-rest, rows 0-context_size
+        print("target future shape", target_future.shape)
+        if plot_samples:
+            ax_target.plot(range(target_observed.shape[0], target_observed.shape[0] + target_future.shape[0]), future_means[i], color="green", alpha=0.25)
+            if plot_sample_stds:
+                ax_target.errorbar(range(target_observed.shape[0], target_observed.shape[0] + target_future.shape[0]), future_means[i], future_stds[i], color="green", alpha=0.25)
+
+
+    # Plot the mean and std of the future predictions
+    if plot_samples_summary:
+        ax_target.errorbar(range(target_observed.shape[0], target_observed.shape[0] + target_future.shape[0]), future_means_from_z, future_stds_from_z, color="red", alpha=0.75,  path_effects=[pe.Stroke(linewidth=3, foreground='r')])
+
+    # Plot the main future prediction with the predicted std
+    if plot_main_prediction:
+        ax_target.errorbar(range(target_observed.shape[0], target_observed.shape[0] + target_future.shape[0]), target_main_future_prediction_mean, target_main_future_prediction_std, color="black", alpha=1)
+
+
+    # Plot the legend
+    ctx_observed = mlines.Line2D([], [], color='darkred', marker='s', ls='', label='Context observed')
+    trt_observed = mlines.Line2D([], [], color='darkblue', marker='s', ls='', label='Target observed')
+    trg_future = mlines.Line2D([], [], color='blue', marker='s', ls='', label='Target future (ground truth)')
+    trg_predicted = mlines.Line2D([], [], color='green', marker='s', ls='', label='Target predicted means, when sampling zs')
+    trg_predicted_mean = mlines.Line2D([], [], color='red', marker='s', ls='', label='The mean of all sampled predictions')
+    trg_mean_predicted = mlines.Line2D([], [], color='black', marker='s', ls='', label='The prediction given mean z')
+
+    # Set hspace, wspace, top, left, right, bottom
+    plt.subplots_adjust(hspace=0.2, wspace=0.2, top=0.950, bottom=0.05, left=0.05, right=0.95)
+
+    # Plot the legend in the upper right
+    plt.legend(handles=[ctx_observed, trt_observed, trg_future, trg_predicted, trg_predicted_mean, trg_mean_predicted], loc="lower left")
+
+
+
+
     plt.show()
