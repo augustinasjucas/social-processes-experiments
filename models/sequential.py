@@ -31,7 +31,7 @@ class EncoderRNN(nn.Module):
         """ Initialize the model """
         super().__init__()
 
-        self.gru = nn.GRU(ninp, nhid, nlayers, dropout=dropout)
+        self.gru = nn.GRU(ninp, nhid, nlayers)
         self.out_linear = nn.Linear(nhid, nout)
         self.hid_linear = nn.Linear(nhid, nout)
         self.ninp = ninp
@@ -306,7 +306,7 @@ class SocialSeq2SeqBase(nn.Module):
         self.pooled_projector = None
         if pooler is not None:
             self.pooled_projector = nn.Linear(encoder.nout + pooler.nout, encoder.nout)
-        self.offset_encoder = FutureOffsetEncoder(encoder.nout)
+        self.offset_encoder = FutureOffsetEncoder(encoder.nout, 0)
 
     def encode_sequences(self, obs: Tensor) -> Tensor:
         """ Encode observed sequences with temporal social pooling

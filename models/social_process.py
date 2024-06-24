@@ -45,7 +45,7 @@ class SocialProcessSeq2Seq(nn.Module):
     def __init__(
             self, components: Seq2SeqProcessComponents, norm_rot: bool = True,
             nposes: int = 1, skip_deterministic_decoding: bool = False,
-            forced_z = None
+            forced_z = None, use_softmax = False
     ) -> None:
         """ Initialize the process """
         super().__init__()
@@ -60,6 +60,7 @@ class SocialProcessSeq2Seq(nn.Module):
         self.skip_deterministic_decoding = skip_deterministic_decoding
         self.merge_observed_with_future = components.merge_observed_with_future
         self.forced_z = forced_z
+        self.use_softmax = use_softmax
 
     def _normalize_rot(
             self, mean: Tensor, std: Tensor = None
@@ -209,6 +210,10 @@ class SocialProcessSeq2Seq(nn.Module):
             future_mu, future_sigma = self._normalize_rot(
                 future_mu, future_sigma
             )
+
+        if self.use_softmax:
+            future_mu = torch.nn.functional.softmax(future_mu, dim=-1)
+
         return Normal(future_mu, future_sigma), encoded_rep
 
     def forward(self, split: types.DataSplit, nz_samples: int = 1,

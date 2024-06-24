@@ -10,6 +10,7 @@
 
 
 import abc
+import itertools
 import logging
 from argparse import ArgumentParser, Namespace
 from collections import OrderedDict
@@ -628,3 +629,125 @@ class SyntheticGlancingSameContext(data.Dataset):
 
     def __len__(self) -> int:
         return self.arr.shape[1]
+
+class GroupOrderingDataset(data.Dataset):
+    def __init__(self,
+                 n: int,
+                 observed_length: int,
+                 future_length: int,
+                 context_size: int,
+                 target_size: int,
+                 meta_sample_count_per_case: int) -> None:
+        """
+        Create a dataset of n people. Creates the n! permutations, where each person talks for `single_person_talk_time`
+        timesteps.
+        Produces a list of Seq2SeqSamples, where each sample is an observed-future pair. Makes sure that each consecutive
+        (target_size+context_size) correspond to the same metasample.
+        Args:
+            n: the number of people in the group (there will be n! total configurations!)
+            observed_length: how much of the sequence to put in each observed part
+            future_length: how much of the sequence to put in each future part
+            context_size: how many (observed, future) pairs to have in the context
+            target_size: how many (observed, future) pairs to have in the target
+            meta_sample_count_per_case: how many meta samples to create for each permutation
+
+        """
+
+        self.meta_samples_per_case = meta_sample_count_per_case
+        self.context_size = context_size
+        self.target_size = target_size
+
+        # Create an rng
+        rng = np.random.default_rng(seed=0)
+
+        # Create the permutations
+        perms = np.array(list(itertools.permutations(range(n))))
+
+        # Save the original permutations
+        self.original_permutations = perms
+
+
+        # Transform the permutations into 1-hot encoded sequences (shape [n, n]), where first dimension is time dimension
+        perms = np.eye(n)[perms]
+
+        # At the moment, perms has shape [perm_count (batch size), permutation_length, n], transpose to [permutation_length, perm_count (batch size), n]
+        perms = np.transpose(perms, (1, 0, 2))
+
+        # Repeat the same permutation twice in the list
+        perms = np.concatenate([perms, perms], axis=0)
+
+        # Shuffle the permutations (according to 1st axis) and shuffle the original_permutations accordingly
+        shuf = rng.permutation(perms.shape[1])
+        perms = perms[:, shuf, :]
+        self.original_permutations = self.original_permutations[shuf]
+
+        # Create a list for storing sequences
+        self.sequences = []
+
+        # Create a list for storing a list of sequences for each meta sample
+        temp_sequences = []
+        self.corresponding_original_permutations = []
+
+        # Go over each permutation
+        for i in range(perms.shape[1]):
+            perm = perms[:, i, :].astype(np.float32)
+
+            for j in range(meta_sample_count_per_case):
+                ind = i * meta_sample_count_per_case + j
+
+                # Choose random starting points for context and target
+                start_indices = rng.integers(0, n, context_size+target_size)
+
+                meta_sample = []
+
+                # Extract (context_size+target_size) number of subsequences of length (observed_length+future_length)
+                for k in range(context_size+target_size):
+
+                    # Extract the observed part
+                    observed_part = perm[start_indices[k]:start_indices[k]+observed_length, :]
+
+                    # Extract the future part
+                    future_part = perm[start_indices[k]+observed_length:start_indices[k]+observed_length+future_length, :]
+
+                    # Create a sample
+                    sample = Seq2SeqSamples(
+                        future_len=future_length,
+                        key=[ind],
+                        observed=observed_part[:, np.newaxis, :],
+                        future=future_part[:, np.newaxis, :],
+                        observed_start=start_indices[k]
+                    )
+
+                    # Append the sample to the list
+                    meta_sample.append(sample)
+
+                temp_sequences.append(meta_sample)
+                self.corresponding_original_permutations.append(i)
+
+        # Shuffle the temp sequences
+        shuf = rng.permutation(len(temp_sequences))
+        temp_sequences = [temp_sequences[i] for i in shuf]
+        self.corresponding_original_permutations = np.array(self.corresponding_original_permutations)[shuf]
+
+        # Flatmap the temp_sequences into self.sequences
+        self.sequences = list(itertools.chain(*temp_sequences))
+
+
+    def get_original_permutation(self, idx: int):
+        """
+        Get the original permutation that was used to create the idx-th sample in the dataset.
+        Args:
+            idx: the index of the sample in the dataset
+
+        Returns: the original permutation that was used to create the idx-th sample in the dataset
+
+        """
+        return self.original_permutations[self.corresponding_original_permutations[idx // (self.context_size + self.target_size)]]
+
+    def __getitem__(self, idx: int) -> Seq2SeqSamples:
+        """ Returns the requested sample.
+        """
+        return self.sequences[idx]
+
+    def __len__(self) -> int:
+        return len(self.sequences)

@@ -216,7 +216,7 @@ class SPSystemBase(AbstractCommonBase):
         self.process = sp.SocialProcessSeq2Seq(
             components, not hparams.skip_normalize_rot, hparams.nposes,
             hparams.skip_deterministic_decoding,
-            forced_z=forced_z
+            forced_z=forced_z, use_softmax=hparams.my_use_softmax
         )
         # Initialize regularizer
         self.reg = OrthogonalRegularizer(reg=hparams.reg)
