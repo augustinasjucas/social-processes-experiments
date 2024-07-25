@@ -15,7 +15,7 @@ from typing import (
 )
 
 from torch import Tensor
-from torch.distributions import Normal
+from torch.distributions import Normal, Categorical
 
 
 class ApproximatePosteriors(NamedTuple):
@@ -70,7 +70,7 @@ class Seq2SeqPredictions(NamedTuple):
                            the latent and deterministic paths
 
     """
-    stochastic: Normal
+    stochastic: Union[Normal, Categorical]
     posteriors: ApproximatePosteriors
     encoded_rep: Optional[Tensor] = None
     deterministic: Tuple[Optional[Tensor], Optional[Tensor]] = (None, None)

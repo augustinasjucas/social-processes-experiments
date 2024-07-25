@@ -35,7 +35,7 @@ from models.vae_seq2seq import VariationalEncDecMLP, VariationalEncDecRNN
 from common.regularizer import OrthogonalRegularizer
 from common.utils import EnumAction
 from train.elbo import log_likelihood
-from train.loss import SocialProcessLoss, SocialAuxLoss
+from train.loss import SocialProcessLoss, SocialAuxLoss, SocialProcessLossCategorical
 
 
 CHECKPOINT_MONITOR_METRIC = "monitored_nll"
@@ -213,11 +213,28 @@ class SPSystemBase(AbstractCommonBase):
         # Build components
         components = builder.init_components(hparams)
         # Initialize the process
-        self.process = sp.SocialProcessSeq2Seq(
-            components, not hparams.skip_normalize_rot, hparams.nposes,
-            hparams.skip_deterministic_decoding,
-            forced_z=forced_z, use_softmax=hparams.my_use_softmax
-        )
+
+        # TODO: hack to allow past experiments to still work after adding my_predict_categorical
+        self.has_categorical = False
+        try:
+            hparams.my_predict_categorical
+            self.has_categorical = True
+        except:
+            pass
+        if self.has_categorical and hparams.my_predict_categorical:
+            self.process = sp.SocialProcessSeq2Seq(
+                components, not hparams.skip_normalize_rot, hparams.nposes,
+                hparams.skip_deterministic_decoding,
+                forced_z=forced_z, use_softmax=hparams.my_use_softmax,
+                use_categorical=hparams.my_predict_categorical
+            )
+        else:
+            self.process = sp.SocialProcessSeq2Seq(
+                components, not hparams.skip_normalize_rot, hparams.nposes,
+                hparams.skip_deterministic_decoding,
+                forced_z=forced_z, use_softmax=hparams.my_use_softmax
+            )
+
         # Initialize regularizer
         self.reg = OrthogonalRegularizer(reg=hparams.reg)
         # Initialize loss module
@@ -225,6 +242,10 @@ class SPSystemBase(AbstractCommonBase):
 
     def _configure_loss(self, hparams: Namespace) -> nn.Module:
         """ Configure the loss module """
+
+        if self.has_categorical and hparams.my_predict_categorical:
+            return SocialProcessLossCategorical()
+
         return SocialProcessLoss(nn.MSELoss())
 
     def forward(self, batch: DataSplit) -> Seq2SeqPredictions:
