@@ -20,7 +20,7 @@ from data.loader import DataSplit
 import torch
 
 from run.plot_curves import (plot_batch, plot_mixed_context, plot_normal_with_context, plot_z_analysis,
-                             plot_multiple_samples_of_z)
+                             plot_multiple_samples_of_z, plot_z_analysis_on_a_single)
 
 def merge_context(data_split : DataSplit):
     """
@@ -276,7 +276,8 @@ def test(
                 plot_batch(meta_sample.context, meta_sample.target, target_future_prediction_mean, target_future_predictions_std, target_averaged_futures, q_context=context_q, target_complement_curves=target_complement_curves, clamped_cnt=clamped_cnt)
             else:
                 # If we are not using mixed context, not using GM, etc (i.e., this is the most basic case), just plot the predictions
-                plot_batch(meta_sample.context, meta_sample.target, target_future_prediction_mean, target_future_predictions_std, target_averaged_futures)
+                context_q = results.posteriors.q_context
+                plot_batch(meta_sample.context, meta_sample.target, target_future_prediction_mean, target_future_predictions_std, target_averaged_futures, plot_some=args.my_plot_only_some_batch, q_context=context_q)
         else:
             # If we are using GM, plot the predictions for both Gaussians
             plot_batch(meta_sample.context, meta_sample.target, target_future_prediction_1_mean, target_future_predictions_1_std, target_averaged_futures, target_future_prediction_2_mean, target_future_predictions_2_std)
@@ -339,7 +340,8 @@ def test_z_analysis(
         test_set: SyntheticGlancingSameContext,
         args: Namespace,
         ckpt_path,
-        waves: np.ndarray
+        waves: np.ndarray,
+        tight: bool = False
 ):
     """
     Test the model on the given test set and plot the z analysis for the given meta samples.
@@ -348,6 +350,7 @@ def test_z_analysis(
         args: model arguments
         ckpt_path: path to the model to load
         waves: the initial np array that the dataset was created from
+        tight: whether to plot analysis on a single ax
 
     """
 
@@ -375,8 +378,8 @@ def test_z_analysis(
         test_set = val_set
 
     # Set the number of samples to plot and the number of z samples
-    meta_sample_cnt = 6
-    z_sample_count = 11
+    meta_sample_cnt = 3
+    z_sample_count = args.my_plot_z_sample_count
 
     # Get the interval from which to sample z
     z_l, z_r = args.my_z_anal_left, args.my_z_anal_right
@@ -422,17 +425,26 @@ def test_z_analysis(
             target_future_complement_curve = target_future_complement_curve[-10:, 1]
 
             # Store the values for later
-            targets_observed[i][j] = target_observed
-            target_future_predictions_mean[i][j] = target_future_prediction_mean
-            target_future_predictions_std[i][j] = target_future_prediction_std
-            target_future_curves[i][j] = target_future_curve
-            target_future_complement_curves[i][j] = target_future_complement_curve
+            targets_observed[i % meta_sample_cnt][j] = target_observed
+            target_future_predictions_mean[i % meta_sample_cnt][j] = target_future_prediction_mean
+            target_future_predictions_std[i % meta_sample_cnt][j] = target_future_prediction_std
+            target_future_curves[i % meta_sample_cnt][j] = target_future_curve
+            target_future_complement_curves[i % meta_sample_cnt][j] = target_future_complement_curve
 
         # Stop if we have enough samples
-        if i == meta_sample_cnt - 1:
-            break
+        if (i + 1) % meta_sample_cnt == 0:
+            f_plot = plot_z_analysis_on_a_single if tight else plot_z_analysis
+            f_plot(targets_observed, target_future_predictions_mean, target_future_predictions_std,
+                   target_future_curves, target_future_complement_curves, z_samples)
 
-    plot_z_analysis(targets_observed, target_future_predictions_mean, target_future_predictions_std, target_future_curves, target_future_complement_curves, z_samples)
+            # Clear the lists and continue
+            targets_observed = [[np.array([]) for _ in range(z_sample_count)] for _ in range(meta_sample_cnt)]
+            target_future_predictions_mean = [[np.array([]) for _ in range(z_sample_count)] for _ in range(meta_sample_cnt)]
+            target_future_predictions_std = [[np.array([]) for _ in range(z_sample_count)] for _ in range(meta_sample_cnt)]
+            target_future_curves = [[np.array([]) for _ in range(z_sample_count)] for _ in range(meta_sample_cnt)]
+            target_future_complement_curves = [[np.array([]) for _ in range(z_sample_count)] for _ in range(meta_sample_cnt)]
+
+
 
 def test_multiple_samples_of_z(
         test_set: SyntheticGlancingSameContext,
@@ -595,6 +607,9 @@ def main() -> None:
     parser.add_argument("--my_test_with_mixed_context", default=False, action="store_true", help="Whether to use mixed context for testing")
     parser.add_argument("--my_plot_nice_mixed_context_summary", default=False, action="store_true", help="Whether to use mixed context for testing")
     parser.add_argument("--my_train_with_mixed_context", default=False, action="store_true", help="Whether to use mixed context for testing")
+    parser.add_argument("--my_plot_only_some_batch", default=False, action="store_true", help="Whether to plot only some context and target instead of all of it")
+    parser.add_argument("--my_plot_z_sample_count", type=int, default=11, help="How many z samples to use when doing z analysis")
+    parser.add_argument("--my_plot_tight_z_analysis", default=False, action="store_true", help="Whether to plot z analysis on a single plot")
 
     parser.add_argument("--my_test_multiple_samples_of_z", default=False, action="store_true", help="Whether to use multiple samples of z for testing")
     parser.add_argument("--my_multi_plot_greens", default=False, action="store_true", help="")
@@ -650,8 +665,8 @@ def main() -> None:
     # Evaluate
     if args.test and args.my_plot_q_of_z:
         test_q_of_z(train_set, args, args.my_ckpt)
-    elif args.test and args.my_plot_z_analysis:
-        test_z_analysis(train_set, args, args.my_ckpt, waves)
+    elif args.test and (args.my_plot_z_analysis or args.my_plot_tight_z_analysis):
+        test_z_analysis(train_set, args, args.my_ckpt, waves, tight=args.my_plot_tight_z_analysis)
     elif args.test and args.my_test_multiple_samples_of_z:
         test_multiple_samples_of_z(train_set, args, args.my_ckpt, waves)
     elif args.test:
@@ -768,7 +783,7 @@ python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --wav
  
  
  
-4 things in the context:
+4 things in the context (TRAIN NORMAL, TEST WITH MIXED STUFF IN THE CONTEXT!):
 python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-69txt --my_fix_variance True --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future
 testing:
 python -m run.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --my_fix_variance True --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=10-monitored_nll=-1.382.ckpt" --test --my_test_with_mixed_context --my_dont_plot_reds

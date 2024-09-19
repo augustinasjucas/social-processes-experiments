@@ -9,7 +9,7 @@
 ###
 
 
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -18,8 +18,10 @@ from torch.distributions.kl import kl_divergence
 
 from data.types import Seq2SeqPredictions
 
+from torch.distributions import Normal, Categorical
 
-def log_likelihood(normal: torch.distributions.Normal, target: Tensor) -> Tensor:
+
+def log_likelihood(normal: Normal, target: Tensor) -> Tensor:
     """ Compute the log probability at the target given a normal distribution
 
     Take mean over the z_samples, target_len, and nsequences, and sum over
@@ -34,7 +36,52 @@ def log_likelihood(normal: torch.distributions.Normal, target: Tensor) -> Tensor
     Returns the log probability evaluated at the target
 
     """
+    # print("normal.log_prob(target).shape =", normal.log_prob(target).shape)
+    # print("after meaning, shape is", normal.log_prob(target).mean(dim=(0, 1, 2)).shape)
+
     return normal.log_prob(target).mean(dim=(0, 1, 2)).sum()
+
+def log_likelihood_categorical(categorical: Categorical, target: Tensor) -> Tensor:
+    # USE SAMPLING:
+    argmaxed = torch.argmax(target, -1)[None, :, :, :]
+    return categorical.log_prob(argmaxed).sum()
+
+    # print("FOr some specific case, argmaxed values are:", argmaxed[0, :, 0, 0])
+    # print("calculate argmax of shape", normal.probs.shape, " result is", argmaxed.shape)
+    # print("in particular, norm:", normal)
+    # print("and normal probs   :", normal.probs)
+    # print("and argmaxed is    :", argmaxed)
+    # print("normal.log_prob(target).shape =", normal.log_prob(argmaxed).shape)
+    # print("after meaning, shapes is", normal.log_prob(argmaxed).mean(dim=(0, 1, 2)).shape)
+
+
+# SUPPOSED:
+# ormal.log_prob(target).shape = torch.Size([1, 4, 8, 1, 7])
+# after meaning, shape is torch.Size([1, 7])
+
+# get:
+# ormal.log_prob(target).shape = torch.Size([1, 4, 8, 1])
+# after meaning, shape is torch.Size([1])
+
+
+    # # USE CATEGORICAL CROSS-ENTROPY:
+    # logits = normal.logits
+    # # print("logits shape:", logits.shape, "target shape:" , target.shape)
+    # logits = logits[0]
+    # logits = torch.permute(logits, (1, 3, 0, 2))
+    #
+    # # print("logits = ", logits)
+    # argmaxed = torch.permute(target, (1, 3, 0, 2))
+    #
+    # # print("target:", argmaxed)
+    #
+    # # print("argmaxed shape", argmaxed.shape)
+    # # argmaxed = torch.permute(argmaxed, (1, 3, 0, 2))
+    # # print("logits shape = ", logits.shape)
+    # # print("target shape = ", target.shape)
+    #
+    # # logits = torch.permute(logits, (3, 0, 1, 2)))
+    # return  - torch.nn.CrossEntropyLoss()(logits, argmaxed)
 
 
 class SocialProcessSeq2SeqElbo(nn.Module):
@@ -55,7 +102,10 @@ class SocialProcessSeq2SeqElbo(nn.Module):
 
         """
         qs = pred.posteriors
-        loss = - log_likelihood(pred.stochastic, target_future)
+        if type(pred.stochastic) is Normal:
+            loss = - log_likelihood(pred.stochastic, target_future)
+        else:
+            loss = - log_likelihood_categorical(pred.stochastic, target_future)
         nll = loss.detach().clone() # important for preserving value
         kl = None
         if qs.q_target is not None:

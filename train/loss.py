@@ -53,7 +53,43 @@ class SocialProcessLoss(nn.Module):
                     aux_losses += self.aux_criterion(pred, trg.future)
             loss += aux_losses
             aux_losses = aux_losses.detach().clone()
+        else:
+            print("aux los is none")
         return loss, nll, kl, aux_losses
+
+
+
+class SocialProcessLossCategorical(nn.Module):
+
+    """ Compute the loss for training a SocialProcess for classification purposes """
+
+    def __init__(self):
+        """ Initialize the module.
+        """
+        super().__init__()
+        self.elbo = SocialProcessSeq2SeqElbo()
+        self.aux_criterion = nn.MSELoss()
+
+
+    def forward(
+            self, sp_prediction: Seq2SeqPredictions, split: DataSplit
+        ) -> Tuple[Tensor, Tensor]:
+        """ Compute the loss """
+        trg = split.target
+        loss, nll, kl = self.elbo(sp_prediction, trg.future)
+
+        # if self.aux_criterion is not None:
+        #     future_mean = sp_prediction.stochastic.probs
+        #     aux_losses = self.aux_criterion(
+        #         future_mean, trg.future.expand_as(future_mean)
+        #     )
+        #     for pred in sp_prediction.deterministic:
+        #         if pred is not None:
+        #             aux_losses += self.aux_criterion(pred, trg.future)
+        #     loss += aux_losses
+        #     aux_losses = aux_losses.detach().clone()
+
+        return loss, nll, kl, torch.tensor(0).to(loss.device)
 
 
 class GeometricHomoscedasticLoss(nn.Module):

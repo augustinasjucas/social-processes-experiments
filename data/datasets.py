@@ -631,13 +631,22 @@ class SyntheticGlancingSameContext(data.Dataset):
         return self.arr.shape[1]
 
 class GroupOrderingDataset(data.Dataset):
+
+    def create_permutations(self, n: int, meta_sample_count_per_case: int, rng):
+        # Using the RNG, return random permutation
+        return rng.permutation(n)
+        # return np.array(list(itertools.permutations(range(n))))
+
+
     def __init__(self,
                  n: int,
                  observed_length: int,
                  future_length: int,
                  context_size: int,
                  target_size: int,
-                 meta_sample_count_per_case: int) -> None:
+                 meta_sample_count_per_case: int,
+                 repeat_count: int = 1,
+                 how_many_random_permutations:int = 1) -> None:
         """
         Create a dataset of n people. Creates the n! permutations, where each person talks for `single_person_talk_time`
         timesteps.
@@ -650,8 +659,12 @@ class GroupOrderingDataset(data.Dataset):
             context_size: how many (observed, future) pairs to have in the context
             target_size: how many (observed, future) pairs to have in the target
             meta_sample_count_per_case: how many meta samples to create for each permutation
+            repeat_count: length of each speaker's turn
+            how_many_random_permutations: used only for dual_ffa_random dataset
 
         """
+        # save for dual ffa random dataset
+        self.how_many_random_permutations = how_many_random_permutations
 
         self.meta_samples_per_case = meta_sample_count_per_case
         self.context_size = context_size
@@ -660,8 +673,7 @@ class GroupOrderingDataset(data.Dataset):
         # Create an rng
         rng = np.random.default_rng(seed=0)
 
-        # Create the permutations
-        perms = np.array(list(itertools.permutations(range(n))))
+        perms = self.create_permutations(n, meta_sample_count_per_case, rng)
 
         # Save the original permutations
         self.original_permutations = perms
@@ -692,12 +704,15 @@ class GroupOrderingDataset(data.Dataset):
         for i in range(perms.shape[1]):
             perm = perms[:, i, :].astype(np.float32)
 
+
             for j in range(meta_sample_count_per_case):
                 ind = i * meta_sample_count_per_case + j
 
                 # Choose random starting points for context and target
-                start_indices = rng.integers(0, n, context_size+target_size)
-
+                max_start = perms.shape[0] // 2
+                if perms.shape[0] // 2 == 2 * n: # To handle random ffa_dual case
+                    max_start = n
+                start_indices = rng.integers(0, max_start, context_size+target_size)
                 meta_sample = []
 
                 # Extract (context_size+target_size) number of subsequences of length (observed_length+future_length)
@@ -709,9 +724,13 @@ class GroupOrderingDataset(data.Dataset):
                     # Extract the future part
                     future_part = perm[start_indices[k]+observed_length:start_indices[k]+observed_length+future_length, :]
 
+                    # Repeat both observed and the future parts repeat_count times (each repetition is consecutive)
+                    observed_part = np.repeat(observed_part, repeat_count, axis=0)
+                    future_part = np.repeat(future_part, repeat_count, axis=0)
+
                     # Create a sample
                     sample = Seq2SeqSamples(
-                        future_len=future_length,
+                        future_len=future_length * repeat_count,
                         key=[ind],
                         observed=observed_part[:, np.newaxis, :],
                         future=future_part[:, np.newaxis, :],
@@ -751,3 +770,66 @@ class GroupOrderingDataset(data.Dataset):
 
     def __len__(self) -> int:
         return len(self.sequences)
+
+class DualFFADataset(GroupOrderingDataset):
+    def create_permutations(self, n: int, meta_sample_count_per_case: int, rng):
+        # create 2 permutations: [0, 1, 2, 3, ..., n-1] and the reverse
+        return np.array([np.arange(n), np.arange(n)[::-1]])
+
+
+
+
+class DualRandomFFADataset(GroupOrderingDataset):
+    def create_permutations(self, n: int, meta_sample_count_per_case: int, rng):
+        perms = []
+        for i in range(self.how_many_random_permutations):
+            cur = rng.integers(0, n)
+            perm = []
+            # Generate 3n random transitions (could do more, but this should be fine)
+            for j in range(30 * n):
+                # Choose the next position randomly
+                if rng.random() < 0.5:
+                    cur = (cur + 1) % n
+                else:
+                    cur = (cur - 1 + n) % n
+
+                perm.append(cur)
+            perms.append(np.array(perm))
+        return np.array(perms)
+
+
+class FullRandomFFADataset(GroupOrderingDataset):
+    def create_permutations(self, n: int, meta_sample_count_per_case: int, rng):
+        perms = []
+        for i in range(self.how_many_random_permutations):
+            perm = []
+            # Generate 20n random transitions (could do more, but this should be fine)
+            for j in range(20 * n):
+                cur = rng.integers(0, n)
+                perm.append(cur)
+            perms.append(np.array(perm))
+        return np.array(perms)
+
+
+class DominatingDataset(GroupOrderingDataset):
+    def create_permutations(self, n: int, meta_sample_count_per_case: int, rng):
+        perms = []
+        for i in range(n):
+
+            for dir in [-1, 1]:
+                perm = []
+                cur = (dir + i + n) % n
+
+                for h in range(n-1):
+                    perm.append(i)
+                    perm.append(cur)
+
+                    cur = (cur + dir + n) % n
+
+                perms.append(perm)
+
+
+        return np.array(perms)
+
+
+
