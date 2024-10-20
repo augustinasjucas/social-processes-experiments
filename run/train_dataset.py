@@ -14,18 +14,53 @@ from pathlib import Path
 
 from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import TestTubeLogger
-
+import torch
+import numpy as np
 import constants.paths as paths
 from common.initialization import init_torch
 from common.model import summarize
 from common.utils import configure_logging
 from data.datasets import SocialDataset
+from data.types import FeatureSet
 from lightning.data import SPSocialDataModule
 from lightning.processes import SPSystemSocial
 from run.utils import (
     add_commmon_args, init_model, init_data, init_ckpt_callbacks, override_hidden_dims
 
 )
+
+def visualize_batch(hparams, batch, index = 0):
+
+    from xrprimer.data_structure.keypoints import Keypoints
+    from xrprimer.visualization.keypoints.visualize_keypoints3d import (
+        visualize_keypoints3d,
+    )
+
+    context = batch.context
+    target = batch.target
+    
+    # leave only one observed context sequence
+
+    keypoints = context.observed[:, 0, :, :]
+    
+    # remove speaking dimension
+    keypoints = keypoints[:, :, :-1]
+
+    keypoints = torch.reshape(keypoints, (keypoints.shape[0], keypoints.shape[1], keypoints.shape[2] // 3, 3))
+
+    keypoints = np.array(keypoints)
+
+    # upsample the keypoints to match time scale (they were sampled every hparams.time_stride frames)
+    # keypoints = np.repeat(keypoints, hparams.time_stride, axis=0)
+
+    kp = Keypoints(
+        kps=keypoints,
+        convention="panoptic",
+    )
+    visualize_keypoints3d(kp, output_path="tmp"+ str(index) + ".mp4", disable_tqdm=False)
+
+
+
 
 def main() -> None:
     """ Run the main experiment """
@@ -37,6 +72,9 @@ def main() -> None:
     parser.add_argument("--hid_dim", type=int, default=1024,
                         help="dimension to override representations")
     parser.add_argument("--out_dir", type=str, help="root output directory")
+
+    parser.add_argument("--paramset_id", type=str, 
+                        help="ID of the parameter set, used purely for logging")
 
     parser = add_commmon_args(parser)
     # Add Trainer args
@@ -50,6 +88,10 @@ def main() -> None:
     # Override representations dimensions if needed
     if args.override_hid_dims:
         args = override_hidden_dims(args, args.hid_dim)
+    
+    # In case we use all data, we do not do any custom pooling
+    if args.feature_set == FeatureSet.FULL:
+        args.no_pool = True
 
     # Create the output root and update log_file path
     outroot = Path(args.out_dir)
@@ -69,6 +111,24 @@ def main() -> None:
     dm = init_data(args, dataset_dir)
     dm.setup("fit")
 
+    # print(" === inspecting dataloader")
+    # train_loader = dm.train_dataloader()
+    # val_loader = dm.val_dataloader()
+
+    # print("loader created")
+    # for i, batch in enumerate(train_loader):
+
+
+        
+    #     print("Batch context observed shape", batch.context.observed.shape)
+    #     print("Batch context future ", batch.context.future.shape)
+    #     print("Batch target observed shape", batch.target.observed.shape)
+    #     print("Batch target future ", batch.target.future.shape)
+    #     print("===")
+    #     if i > 10:
+    #         break
+    # print("== done")
+    # visualize_batch(args, batch)
     # Initialize the lightning module
     model = init_model(args)
 

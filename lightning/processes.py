@@ -136,6 +136,9 @@ class AbstractCommonBase(pl.LightningModule, abc.ABC):
         nll = metrics["nll"]
         # Log for checkpointing
         self.log(CHECKPOINT_MONITOR_METRIC, nll)
+        self.log("monitored_loss", metrics["loss"])
+        self.log("monitored_aux_loss", metrics["aux_loss"])
+        self.log("monitored_kl", metrics["kl"])
 
     def _log_epoch(self, mode: str, metric_tag: str, metric: Tensor) -> None:
         """ Log the metrics to tensorboard as well as logging channels """

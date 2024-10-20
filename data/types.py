@@ -160,7 +160,7 @@ class FeatureSet(Enum):
 
     HBP  = auto() # Head and Body Pose
     HBPS   = auto() # Head and Body Pose, Speaking Status
-
+    FULL = auto() # all joint positions
 
 class BucketType(Enum):
 

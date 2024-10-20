@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+    #!/usr/bin/env python3
 # -*- coding:utf-8 -*-
 ###
 # File: encoder_rnn.py
@@ -105,6 +105,7 @@ class DecoderRNN(nn.Module):
         #
         # output -- (1, batch_size, nhid)
         # h_n    -- (nlayers, batch_size, nhid)
+        hidden = hidden.contiguous()
         output, h_n = self.gru(inputs, hidden)
 
         # Allow the linear layer to see the context tensor, the input, as well
@@ -115,7 +116,9 @@ class DecoderRNN(nn.Module):
         # Generate final prediction
         # prediction -- (batch size, nout)
         prediction = self.out(output)
-
+# VAE: Forwarding. Inputs: torch.Size([1, 384, 180]) hidden: torch.Size([2, 384, 64])
+# SP:  Forwarding. Inputs: torch.Size([1, 384, 180]) hidden: torch.Size([2, 384, 64])
+# 
         return prediction, h_n
 
     def init_hidden(self, batch_size):
@@ -556,7 +559,6 @@ class StochasticEncoderDecoderRNN(SocialSeq2SeqBase):
             teacher_forcing --  The probability of using teacher forcing.
                                 For eg. if value is 0.75, ground truth values
                                 are used 75% of the time
-
         Returns the future mean and std
         future mean    -- tensor (n_samples, future_len, batch_size * npeople,
                                   data_dim)

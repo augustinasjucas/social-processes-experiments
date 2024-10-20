@@ -33,13 +33,35 @@ from data.types import BucketType, ContextRegime, FeatureSet, ModelType
 
 
 # Map from feature set to the column names expected in the dataframe
+FULL_COLUMNS = [
+    'Neck_x', 'Neck_y', 'Neck_z', 
+    'Nose_x', 'Nose_y', 'Nose_z', 
+    'BodyCenter_x', 'BodyCenter_y', 'BodyCenter_z', 
+    'lShoulder_x', 'lShoulder_y', 'lShoulder_z', 
+    'lElbow_x', 'lElbow_y', 'lElbow_z', 
+    'lWrist_x', 'lWrist_y', 'lWrist_z',
+    'lHip_x', 'lHip_y', 'lHip_z',
+    'lKnee_x', 'lKnee_y', 'lKnee_z', 
+    'lAnkle_x', 'lAnkle_y', 'lAnkle_z',
+    'rShoulder_x', 'rShoulder_y', 'rShoulder_z',
+    'rElbow_x', 'rElbow_y', 'rElbow_z', 
+    'rWrist_x', 'rWrist_y', 'rWrist_z',
+    'rHip_x', 'rHip_y', 'rHip_z', 
+    'rKnee_x', 'rKnee_y', 'rKnee_z',
+    'rAnkle_x', 'rAnkle_y', 'rAnkle_z', 
+    'lEye_x', 'lEye_y', 'lEye_z',
+    'lEar_x', 'lEar_y', 'lEar_z', 
+    'rEye_x', 'rEye_y', 'rEye_z', 
+    'rEar_x', 'rEar_y', 'rEar_z', 
+    'speaking'
+]
 FEATURE_FIELDS_MAP = {FeatureSet.HBPS: BASIC_FEATURES_COLUMNS,
-                      FeatureSet.HBP: BASIC_FEATURES_COLUMNS[:-1]}
+                      FeatureSet.HBP: BASIC_FEATURES_COLUMNS[:-1],
+                      FeatureSet.FULL: FULL_COLUMNS}
 
 
 # Column names to standardize
-COLUMNS_TO_STDIZE = ["body_tx", "body_ty", "body_tz",
-                     "head_tx", "head_ty", "head_tz"]
+COLUMNS_TO_STDIZE = []
 
 # Percentage of frames of an interaction to use as context
 CONTEXT_FRAMES_FRACTION = 0.2
@@ -103,6 +125,7 @@ class SPSocialDataModule(pl.LightningDataModule):
             with open(self.data_dir/"train.txt", "r") as f:
                 train_groups = [l.strip("\n") for l in f]
             fold = {"train": train_groups, "val": train_groups}
+            print("val and train are the same groups!")
 
         # Extract the train dataframe and standardize
         train_df = df.loc[df.group_id.isin(fold["train"])]
@@ -223,8 +246,8 @@ class SPSocialDataModule(pl.LightningDataModule):
         return DataLoader(
             dataset,
             batch_sampler=sampler,
-            collate_fn=collate_fn,
-            num_workers=self.hparams.ndata_workers
+            collate_fn=collate_fn
+            # num_workers=self.hparams.ndata_workers
         )
 
     def train_dataloader(self):

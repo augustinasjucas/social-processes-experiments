@@ -213,6 +213,7 @@ class BucketSampler(Sampler):
                 logging.info(f"[!] Not enough seqs ({len(indices)}) for key {key} for batching; "
                              f"min batch size = {self.min_batch_size}")
                 continue
+            # cnt = 0
             # Create batches from flattened indices
             for seqs in [indices[i:i+self.batch_size]
                          for i in range(0, len(indices), self.batch_size)]:
@@ -223,6 +224,8 @@ class BucketSampler(Sampler):
                 else:
                     # Create a new batch with the sequences
                     batches.append(seqs)
+                    # cnt += 1
+            # print("Out of", key, "I created", cnt, "batches")
         self.num_samples = len(batches)
         return batches
 

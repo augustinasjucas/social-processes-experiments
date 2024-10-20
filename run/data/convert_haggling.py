@@ -96,6 +96,7 @@ def load_group(path: Path):
 
 
 def main():
+    print("==== parsing")
     """ Convert each group in the panoptic haggling dataset to pd.DataFrame """
     parser = argparse.ArgumentParser()
     parser.add_argument("--haggling_dir", type=str,

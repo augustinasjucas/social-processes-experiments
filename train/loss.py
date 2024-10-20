@@ -127,8 +127,25 @@ class SocialAuxLoss(nn.Module):
                             (..., <(qw, qx, qy, qz, tx, ty, tz) * nposes, ss (optional)>)
         """
         # Compute Geometric Loss
-        loss = self.geometric(prediction, target)
-        if self.feature_set == FeatureSet.HBPS:
+        if self.feature_set == FeatureSet.FULL: # TODO: figure this out
+            # (time, batch, pepole, features) -> (batch, time, people, features) -> (batch, -1)
+            # loss_old = nn.MSELoss()(prediction[..., :-1], target[..., :-1])
+
+            if len(prediction.shape) == 5: # (1, time, batch, pepole, features) -> (time, batch, pepole, features)
+                prediction_reshaped = torch.squeeze(prediction, 0)
+                target_reshaped = torch.squeeze(target, 0)
+            else:
+                prediction_reshaped = prediction
+                target_reshaped = target
+            prediction_reshaped = prediction_reshaped[..., :-1]
+            target_reshaped = target_reshaped[..., :-1]
+            target_reshaped = torch.reshape(torch.transpose(target_reshaped, 0, 1), (target_reshaped.shape[1], -1))
+            prediction_reshaped = torch.reshape(torch.transpose(prediction_reshaped, 0, 1), (prediction_reshaped.shape[1], -1))
+
+            loss = nn.MSELoss()(prediction_reshaped, target_reshaped)
+        else:
+            loss = self.geometric(prediction, target)
+        if self.feature_set == FeatureSet.HBPS or self.feature_set == FeatureSet.FULL:
             # Compute speaking status loss
             loss += F.binary_cross_entropy_with_logits(
                 prediction[..., -1], target[..., -1]

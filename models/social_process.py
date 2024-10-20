@@ -116,6 +116,7 @@ class SocialProcessSeq2Seq(nn.Module):
                 (batch_size, z_dim)
 
         """
+        # MINE: this function takes a context and returns a normal distribution for z of this context
         # Encode the observed seqs, rep is (nlayers, batch_size * npeople, dim)
         rep = self.latent_encdec.encode_sequences(observed)
         rep = rep.mean(0) # (batch_size * npeople, dim)
@@ -222,6 +223,7 @@ class SocialProcessSeq2Seq(nn.Module):
         q_target = None
         q = q_context
         if self.training:
+            # TODO: ask about this. Here, instead of encoding the context for z (left part), we encode the target. 1. Why are we encoding the target here, and dropping context encoding *totally*? 2. How does this help with training?
             # Encode the target sequences too while training
             q_target = self._encode_latent(trg.observed)
             q = q_target
@@ -233,7 +235,7 @@ class SocialProcessSeq2Seq(nn.Module):
         det_path_futures = None
         if  not self.skip_deterministic_decoding:
             latent_path_futures = self._decode_deterministic(
-                self.latent_encdec, trg, teacher_forcing
+                self.latent_encdec, trg, teacher_forcing        # TODO: why are we using trg here, and not ctx? Aren't we encoding the __context__ information through latent/deterministic paths? ---- KEY QUESTION
             )
             if self.det_encdec is not None:
                 det_path_futures = self._decode_deterministic(
@@ -261,7 +263,10 @@ class SocialProcessSeq2Seq(nn.Module):
             context     --  The context sequences to condition on
             nz_samples  --  The number of z samples to use for estimation
         """
+        # Encode context and get a distrubution over z (we call it q here)
         q = self._encode_latent(context)
+
+        # For each sample, predict something. We get the distributions for the future sequences (p_future) and some condensed represenatation (I am not sure about this one yet)
         p_future, encoded_rep = self._predict(samples, q, nz_samples, teacher_forcing=0, context=context)
         return types.Seq2SeqPredictions(
             stochastic=p_future, posteriors=types.ApproximatePosteriors(q),

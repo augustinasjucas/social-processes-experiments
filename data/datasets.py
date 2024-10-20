@@ -187,8 +187,8 @@ class SocialDataset(SocialDatasetInterface):
         self.feature_fields = feature_fields
         # Compute the keys and make sure they are the same for observed
         # and future dfs
-        obs_keys = obs_df.groupby(SocialDataset.group_fields()).groups.keys()
-        fut_keys = self.fut_df.groupby(SocialDataset.group_fields()).groups.keys()
+        obs_keys = list(obs_df.groupby(SocialDataset.group_fields()).groups.keys())
+        fut_keys = list(self.fut_df.groupby(SocialDataset.group_fields()).groups.keys())
         assert (obs_keys == fut_keys), ("dataframes must contain same groups")
         self.group_keys = obs_keys
         # Map group keys to (observed sequences, future_seqs)

@@ -166,6 +166,7 @@ class RecurrentBuilder:
             hparams :   The hyper parameters for initializing the component
                         networks
         """
+        # MINE: this method initializes ALL required encoders / decoders
         # Target encoder
         encoder = EncoderRNN(data_dim, encoder_nhid, encoder_nout, nlayers,
                              dropout)
