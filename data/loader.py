@@ -93,6 +93,21 @@ def collate_sampled_context(
     target = collate_seq2seq(batch)
     return DataSplit(context=context, target=target)
 
+def collate_context_independently(
+        batch: Sequence[Seq2SeqSamples], ncontext: int = 32
+    ) -> DataSplit:
+    """ Split the batch into context and target data descriptors, where 
+    no samples are shared between the context and target.
+
+    Args:
+        batch       : The batch from the data loader to collate
+        ncontext    : The number of context points for every batch; the first
+                      `ncontext` points are chosen as context
+    """
+    context = collate_seq2seq(batch[:ncontext])
+    target = collate_seq2seq(batch[ncontext:])
+    return DataSplit(context=context, target=target)
+
 
 def collate_unpaired_context(
         batch: Sequence[Tuple[Seq2SeqSamples, np.ndarray]]
