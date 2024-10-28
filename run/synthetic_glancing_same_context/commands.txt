@@ -1,0 +1,186 @@
+r"""
+
+Not fixed variance:
+Results:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.25 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 2 --log_file final_train_log-5.txt --test --my_fix_variance False --my_ckpt "saved-experiments/synthetic-glancing-same-context/2-not-fixed-variance/checkpoint.ckpt"
+Loss curves:
+python3 .\run\plot_curves.py "saved-experiments/synthetic-glancing-same-context/2-not-fixed-variance/train_log.txt" train
+python3 .\run\plot_curves.py "saved-experiments/synthetic-glancing-same-context/2-not-fixed-variance/train_log.txt" valid
+
+Fixed variance:
+Results:
+python3 .\run\plot_curves.py "saved-experiments\synthetic-glancing-same-context\1-fixed-variance\train_log.txt" train
+python3 .\run\plot_curves.py "saved-experiments\synthetic-glancing-same-context\1-fixed-variance\train_log.txt" valid
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.25 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 2 --log_file final_train_log-3.txt --test --fix_variance --my_ckpt "saved-experiments/synthetic-glancing-same-context/1-fixed-variance/checkpoint.ckpt"
+
+Z posterior: (not fixed variance)
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.25 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 2 --log_file final_train_log-5.txt --test --my_fix_variance False --my_ckpt "saved-experiments/synthetic-glancing-same-context/2-not-fixed-variance/checkpoint.ckpt" --my_plot_q_of_z --test
+
+Z posterior (fixed variance)
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.25 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 2 --log_file final_train_log-3.txt --test --fix_variance --my_ckpt "saved-experiments/synthetic-glancing-same-context/1-fixed-variance/checkpoint.ckpt" --my_plot_q_of_z --test
+
+
+What I think happens:
+    1. Model minimizes the KL between (q(z | context) || q (z | target)) by making the posterior of the context and target to some constant value.
+    That can be seen from the very beginning, since the KL is pretty much always is 0. That comes from the fact, that in the z_encoder, "shared_layers" contains
+    ReLU activation, and from the beginning, it does make shared_rep=0, which results in the posterior to be a constant distribution both for the context and target encodings.
+    2. Therefore, the process decoder essentially loses the information from z, which in turn results in it having to learn averaged predictions. 
+    
+Solutions:
+    1. Increase the weight on KL, so that the model is forced to make the posterior of the context and target to be different. Although this may result in it always making the 
+    shared_rep (or others) to be 0, which in turn will result in the same problem. Let's try this.
+ python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 2 --log_file final_train_log-MLP-1.txt --my_fix_variance False --batch_size 12 --my_plot_q_of_z --test --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=5-v1.ckpt"
+    2.
+Had to change z_n_hid
+Had to merge the context
+ python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-MLP-1.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --test --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=083-v2.ckpt"
+    
+    3. Did not work as well. So NOW, I will try to force posteriors myself, to see if it can learn from them. I.e., I will set the posterior to N(0, 0.001) if context is 
+    a normal sin continuation and set the posterior to N(1, 0.001) if it is not.
+
+TRY: change the context encoding to 0/1 (but not the target encoding! i.e., we allow for learning the target encoding. So we fix only one part of the KL, and learn the other)
+python -m run.synthetic_glancing_same_context.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 32 --log_file final_train_log-MLP-1.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_force_posteriors
+
+FOUND ISSUE: the context z encoding and the target z encoding both encode ONLY the observed parts of the sequences. In this situation, that does not make sense, since the observed part does not store the required information.
+SOLUTION: encode the context/target into p(z) by encoding on merged observed+target.
+ISSUE: this gives the future information for z, which can then be used by the decoder. BUUUUT, since z is one-dimensional here, this might be fine
+[====================== FROM THIS PART, EVERYTHING IS GOING TO BE IN THE README ======================]
+python -m run.synthetic_glancing_same_context.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 32 --log_file final_train_log-MLP-1.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_force_posteriors --my_merge_observed_with_future
+
+
+FINALLY, SOMETHING THAT IS WORKING!!!
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 32 --log_file final_train_log-MLP-1.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_force_posteriors --my_merge_observed_with_future --test --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=042-v5.ckpt"
+Note that here the posteriors are properly learned. Adding a validation set could be tried, but at least it does not underfit!
+
+Now, try to do the same thing just without posterior forcing!
+python -m run.synthetic_glancing_same_context.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 32 --log_file final_train_log-MLP-1.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future 
+AND BAAAAAM: p(z | C is capped) = N(-0.45, (0.1) AND p(z | C continues) = N(0.45, 0.1) this is after epoch 3
+After epoch 8, its std=0.1, Mean is -1.1 or 0.0. 
+Pretty much exactly like this!!!!!!!
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 32 --log_file final_train_log-MLP-1.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --test --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=016-v7.ckpt" 
+Now it's time to try search for the boundary of z.
+
+
+NOW THIS IS ON TRAINING DATA VARYING Z: (this is exactly what we want)
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 32 --log_file final_train_log-MLP-1.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --test --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=016-v7.ckpt" --my_plot_z_analysis 
+=========== MAIN RESULT ^^^^ ==========
+
+
+
+
+Aftwerwards, now we can include a validation set! and run all of this with a proper validation
+python -m run.synthetic_glancing_same_context.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file FFINAAALL-with-proper-val-1.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_plot_z_analysis --my_use_proper_validation
+(ran for full 40 epochs)
+BTW INDEED, setting hid dim to low-enough values makes KL be 0.0! Most probably due to ReLU.
+so the best model is at "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=025-v6.ckpt", so to test it:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file FFINAAALL-with-proper-val-1.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --test --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=025-v6.ckpt" --my_use_proper_validation --my_dont_plot_reds 
+This one is doing very poorly for the straight lines. But in principle, it's fine..
+Now do the same thing, just this time, plot what was the case with the validation set:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file FFINAAALL-with-proper-val-1.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --test --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=025-v6.ckpt" --my_use_proper_validation --my_plot_validation_set --my_dont_plot_reds 
+
+results:
+python -m run.synthetic_glancing_same_context.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.1 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file FFINAAALL-with-proper-val-6.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_use_proper_validation
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file FFINAAALL-with-proper-val-6.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --test --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=014-v9.ckpt" --test --my_use_proper_validation --my_plot_validation_set --my_dont_plot_reds 
+Results kinda suck, probably need more data.
+
+Let's train with more data...
+
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file FFINAAALL-with-proper-val-7.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --test --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=003-v13.ckpt" --test --my_use_proper_validation --my_dont_plot_reds 
+
+The most 
+
+
+realistic demonstration:
+python -m run.synthetic_glancing_same_context.run_synthetic_glancing_same_context  --component MLP --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 6 --log_file FFINAAALL-with-proper-val-9.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_use_proper_validation --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=007-v12.ckpt" --test --my_dont_plot_reds --my_plot_z_analysis --my_z_anal_right 1.57 --my_z_anal_left 0.36 [--my_plot_validation_set]
+
+
+Without fixing variance, it still works the same:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 32 --log_file final_train_log-RNN-69txt --my_fix_variance False --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=4-monitored_nll=0.384.ckpt" --test --my_dont_plot_reds --my_plot_z_analysis
+
+Outputting a GM:
+C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=005-v14.ckpt
+ python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 6 --log_file FFINAAALL-with-proper-val-9.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_use_proper_validation --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=005-v14.ckpt" --test --my_use_GM --my_dont_plot_reds
+ 
+outputting gm:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 6 --log_file FFINAAALL-with-proper-val-9.txt --fix_variance --batch_size 12 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_use_GM --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=4-monitored_nll=-1.100.ckpt" --test --my_dont_plot_reds
+ 
+ 
+ 
+4 things in the context (TRAIN NORMAL, TEST WITH MIXED STUFF IN THE CONTEXT!):
+python -m run.synthetic_glancing_same_context.run_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-69txt --fix_variance --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future
+testing:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --fix_variance --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=10-monitored_nll=-1.382.ckpt" --test --my_test_with_mixed_context --my_dont_plot_reds
+z analysis of the corresponding points:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --fix_variance --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=10-monitored_nll=-1.382.ckpt" --test --my_plot_z_analysis --my_z_anal_left 0.21 --my_z_anal_right 1.75
+
+Better z analysis for testing with mixed context (train with same context):
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --fix_variance --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=10-monitored_nll=-1.382.ckpt" --test --my_test_with_mixed_context --my_dont_plot_reds --my_plot_nice_mixed_context_summary
+
+When trained with mixed context:
+ python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=13-monitored_nll=23.385.ckpt" --my_train_with_mixed_context --test --my_test_with_mixed_context --my_dont_plot_reds --my_plot_nice_mixed_context_summary
+ 
+ 
+out-2\logs\checkpoints-synthetic\mon-epoch=13-monitored_nll=23.385.ckpt
+
+
+
+PROPERLY TRAINED WITH UNFIXED VARIANCE (z analysis, important!):
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_plot_z_analysis --my_z_anal_left -2.5 --my_z_anal_right -0.9
+
+SAME THING, BUT NOW PLOTTING q_z:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_plot_q_of_z
+
+THEN FINAL NICE Z ANALYSIS: 
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_plot_nice_mixed_context_summary
+
+and if testing with mixed context:(THIS IS IMPORTANT, AS IT SHOWS THAT q(z | C) is different!)
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --my_test_with_mixed_context --test --my_plot_nice_mixed_context_summary
+
+Finally, sampling from q(z |C):
+Unfixed:
+(below)
+fixed:
+(below)
+
+==================================== MULTI SAMPLING ===================================
+
+===== FIXED ======
+With fixed variance (sampling from q(z|C), not using mixed context here):
+python -m   run.synthetic_glancing_same_context.test_synthetic_glancing_same_context  --my_multi_plot_reds --my_multi_plot_blacks --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "out-2\logs\checkpoints-synthetic\mon-epoch=10-monitored_nll=-1.382.ckpt" --test --my_dont_plot_reds --my_test_multiple_samples_of_z
+Without fixed variance (sampling from q(z|C):
+(below)
+
+================ UNFIXED ===================
+Z analysis for unfixed:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test  --my_plot_z_analysis --my_z_anal_left -2.5 --my_z_anal_right -0.9
+
+   (my_multi_plot_greens, my_multi_plot_greens_stds, my_multi_plot_reds, my_multi_plot_blacks, my_multi_sample_count)
+   
+To see the samples (no std):  
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --my_multi_plot_greens --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_test_multiple_samples_of_z
+
+To see the samples (with std). HERE we see that even if the sampled z makes the curve too far away from the ground truth, the STD is still large. Kinda makes sense, but also maybe not.
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --my_multi_sample_count 5 --my_multi_plot_greens --my_multi_plot_greens_stds --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_test_multiple_samples_of_z
+
+Multiple samples with a summary:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --my_multi_plot_reds --my_multi_plot_greens --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_test_multiple_samples_of_z
+
+Multiple samples with only a summary:
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --my_multi_plot_reds --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_test_multiple_samples_of_z
+
+Multiple samples with a summary + sample from the middle: (HERE WE SEE THAT THAT BOTH variance when sampling from z is small and the variance from the middle aims to minimize the variance) Also, the curves nicely match.
+python -m run.synthetic_glancing_same_context.test_synthetic_glancing_same_context --my_multi_plot_reds --my_multi_plot_blacks --gpus 1 --future_len 10 --waves_file phased-sin-with-stops.npy --outdir out-2 --skip_normalize_rot --data_dim 1 --dropout 0.0 --max_epochs 250 --r_dim 2 --z_dim 1 --override_hid_dims --hid_dim 5 --log_file final_train_log-RNN-691.txt --batch_size 16 --skip_deterministic_decoding --my_merge_context --my_merge_observed_with_future --my_ckpt "C:\Users\augus\Desktop\social-processes-experiments\out-2\logs\checkpoints-synthetic\last-epoch=038-v7.ckpt" --test --my_test_multiple_samples_of_z
+
+
+FINAL CONCLUSIONS:
+    1. When variance is not fixed, the output variance tries to be as small as possible and the sampling-from-q(z|C) variance
+    is also very small (max 0.01 at places). Those 2 variances do not match, since we force the output variance to be at last 0.1. 
+    I suspect that if we didnt, it would go to 0. 
+    
+    2.  When variance IS fixed, the sampling-from-q(z|C) variance is also very small (~0.01 mostly).
+    
+    3. If we take the mean curve from multiple sampling-from-q(z|C) samples, we will get the same curve as the mean of the sample that was generated from mean z.
+    That is cool.
+    
+
+"""
