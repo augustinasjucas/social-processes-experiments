@@ -9,12 +9,12 @@
 ###
 
 
-from typing import  NamedTuple, Optional, Tuple
+from typing import NamedTuple, Optional, Tuple, Union, Type
 
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.distributions import Normal
+from torch.distributions import Normal, Categorical
 
 import data.types as types
 import models.sequential as seq
@@ -45,7 +45,7 @@ class SocialProcessSeq2Seq(nn.Module):
     def __init__(
             self, components: Seq2SeqProcessComponents, norm_rot: bool = True,
             nposes: int = 1, skip_deterministic_decoding: bool = False,
-            forced_z = None, use_softmax = False
+            forced_z = None, use_softmax = False, use_categorical = False
     ) -> None:
         """ Initialize the process """
         super().__init__()
@@ -61,6 +61,7 @@ class SocialProcessSeq2Seq(nn.Module):
         self.merge_observed_with_future = components.merge_observed_with_future
         self.forced_z = forced_z
         self.use_softmax = use_softmax
+        self.use_categorical = use_categorical
 
     def _normalize_rot(
             self, mean: Tensor, std: Tensor = None
@@ -167,7 +168,7 @@ class SocialProcessSeq2Seq(nn.Module):
     def _predict(
             self, samples: types.Seq2SeqSamples, q_distrib: Normal,
             nz_samples: int, teacher_forcing: float = 0, context: Tensor = None
-    ) -> Normal:
+    ) -> Tuple[Union[Normal, Categorical], Tensor]:
         """ Sample from the encoded distribution and make predictions
 
         Args:
@@ -213,6 +214,10 @@ class SocialProcessSeq2Seq(nn.Module):
 
         if self.use_softmax:
             future_mu = torch.nn.functional.softmax(future_mu, dim=-1)
+
+        # In case we are using a categorical distribution, we fully ignore the sigma
+        if self.use_categorical:
+            return Categorical(logits=future_mu), encoded_rep
 
         return Normal(future_mu, future_sigma), encoded_rep
 

@@ -56,6 +56,28 @@ class SocialProcessLoss(nn.Module):
         return loss, nll, kl, aux_losses
 
 
+
+class SocialProcessLossCategorical(nn.Module):
+
+    """ Compute the loss for training a SocialProcess for classification purposes """
+
+    def __init__(self):
+        """ Initialize the module.
+        """
+        super().__init__()
+        self.elbo = SocialProcessSeq2SeqElbo()
+        self.aux_criterion = nn.MSELoss()
+
+
+    def forward(
+            self, sp_prediction: Seq2SeqPredictions, split: DataSplit
+        ) -> Tuple[Tensor, Tensor]:
+        """ Compute the loss """
+        trg = split.target
+        loss, nll, kl = self.elbo(sp_prediction, trg.future)
+
+        return loss, nll, kl, torch.tensor(0).to(loss.device)
+
 class GeometricHomoscedasticLoss(nn.Module):
 
     """ Learn weighting to balance positional and rotational loss

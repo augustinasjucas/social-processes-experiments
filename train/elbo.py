@@ -9,7 +9,7 @@
 ###
 
 
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -18,8 +18,9 @@ from torch.distributions.kl import kl_divergence
 
 from data.types import Seq2SeqPredictions
 
+from torch.distributions import Normal, Categorical
 
-def log_likelihood(normal: torch.distributions.Normal, target: Tensor) -> Tensor:
+def log_likelihood(normal: Normal, target: Tensor) -> Tensor:
     """ Compute the log probability at the target given a normal distribution
 
     Take mean over the z_samples, target_len, and nsequences, and sum over
@@ -36,6 +37,18 @@ def log_likelihood(normal: torch.distributions.Normal, target: Tensor) -> Tensor
     """
     return normal.log_prob(target).mean(dim=(0, 1, 2)).sum()
 
+def log_likelihood_categorical(categorical: Categorical, target: Tensor) -> Tensor:
+    """ Compute the log probability at the target given a categorical distribution
+
+    Args:
+        categorical : the categorical distribution to evaluate
+        target      : denotes the target at which to compute the log probability
+
+    Returns the log probability evaluated at the target
+
+    """
+    argmaxed = torch.argmax(target, -1)[None, :, :, :]
+    return categorical.log_prob(argmaxed).sum()
 
 class SocialProcessSeq2SeqElbo(nn.Module):
 
@@ -55,7 +68,11 @@ class SocialProcessSeq2SeqElbo(nn.Module):
 
         """
         qs = pred.posteriors
-        loss = - log_likelihood(pred.stochastic, target_future)
+        if type(pred.stochastic) is Normal:
+            loss = - log_likelihood(pred.stochastic, target_future)
+        elif type(pred.stochastic) is Categorical:
+            loss = - log_likelihood_categorical(pred.stochastic, target_future)
+
         nll = loss.detach().clone() # important for preserving value
         kl = None
         if qs.q_target is not None:

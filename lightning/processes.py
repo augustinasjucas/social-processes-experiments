@@ -35,7 +35,7 @@ from models.vae_seq2seq import VariationalEncDecMLP, VariationalEncDecRNN
 from common.regularizer import OrthogonalRegularizer
 from common.utils import EnumAction
 from train.elbo import log_likelihood
-from train.loss import SocialProcessLoss, SocialAuxLoss
+from train.loss import SocialProcessLoss, SocialAuxLoss, SocialProcessLossCategorical
 
 
 CHECKPOINT_MONITOR_METRIC = "monitored_nll"
@@ -213,10 +213,22 @@ class SPSystemBase(AbstractCommonBase):
         # Build components
         components = builder.init_components(hparams)
         # Initialize the process
+
+        # we perform a small hack in order to allow older models to be loaded
+        self.has_categorical = hasattr(hparams, 'my_predict_categorical')
+        self.has_softmax = hasattr(hparams, 'my_use_softmax')
+
+        latest_params = {}
+        if self.has_categorical and hparams.my_predict_categorical:
+            latest_params['use_categorical'] = hparams.my_predict_categorical
+        if self.has_softmax:
+            latest_params['use_softmax'] = hparams.my_use_softmax
+
         self.process = sp.SocialProcessSeq2Seq(
             components, not hparams.skip_normalize_rot, hparams.nposes,
             hparams.skip_deterministic_decoding,
-            forced_z=forced_z, use_softmax=hparams.my_use_softmax
+            forced_z=forced_z,
+            **latest_params
         )
         # Initialize regularizer
         self.reg = OrthogonalRegularizer(reg=hparams.reg)
@@ -225,6 +237,12 @@ class SPSystemBase(AbstractCommonBase):
 
     def _configure_loss(self, hparams: Namespace) -> nn.Module:
         """ Configure the loss module """
+
+        # If we want to predict categorical a categorical distribution
+        # then a different loss function is used
+        if self.has_categorical and hparams.my_predict_categorical:
+            return SocialProcessLossCategorical()
+
         return SocialProcessLoss(nn.MSELoss())
 
     def forward(self, batch: DataSplit) -> Seq2SeqPredictions:
